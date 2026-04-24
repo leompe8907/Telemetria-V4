@@ -1,0 +1,276 @@
+# ============================================================================
+# PYTHON
+# ============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+*.pot
+*.pyc
+db.sqlite3
+db.sqlite3-journal
+
+# ============================================================================
+# ENTORNOS VIRTUALES
+# ============================================================================
+
+# Virtual environments
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# ============================================================================
+# CONFIGURACIÓN Y SECRETOS
+# ============================================================================
+
+# Variables de entorno (NUNCA subir al repositorio)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# Archivos de configuración sensibles
+config.local.py
+secrets.json
+*.key
+*.pem
+
+# ============================================================================
+# DJANGO
+# ============================================================================
+
+# Base de datos SQLite
+*.sqlite3
+*.sqlite3-journal
+*.db
+
+# Media files (si se usan)
+media/
+mediafiles/
+
+# Static files (si se recopilan)
+staticfiles/
+static_root/
+
+# Logs
+logs/
+*.log
+django.log
+panaccess.log
+errors.log
+
+# Django migrations (opcional - descomentar si no quieres versionar migraciones)
+# */migrations/*.py
+# !*/migrations/__init__.py
+
+# ============================================================================
+# CELERY
+# ============================================================================
+
+# Celery beat schedule file
+celerybeat-schedule
+celerybeat.pid
+
+# Celery results
+celery_results/
+
+# ============================================================================
+# REDIS
+# ============================================================================
+
+# Redis dump files
+dump.rdb
+*.rdb
+
+# ============================================================================
+# IDEs Y EDITORES
+# ============================================================================
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ============================================================================
+# SISTEMA OPERATIVO
+# ============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ============================================================================
+# ARCHIVOS TEMPORALES
+# ============================================================================
+
+# Archivos temporales
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# ============================================================================
+# JUPYTER NOTEBOOKS
+# ============================================================================
+
+.ipynb_checkpoints
+*.ipynb
+
+# ============================================================================
+# OTROS
+# ============================================================================
+
+# Archivos comprimidos (opcional)
+*.zip
+*.tar
+*.tar.gz
+*.rar
+
+# Archivos de backup
+*.backup
+*.old
+
+# Archivos de documentación generados
+docs/_build/
+docs/.doctrees/
+
+# Archivos de profiling
+*.prof
+*.lprof
+
+# Archivos de mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Archivos de Pyre type checker
+.pyre/
+
+# Archivos de pytype
+.pytype/
+
+# Archivos de Cython
+cython_debug/
+
