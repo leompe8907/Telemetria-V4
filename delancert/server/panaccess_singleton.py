@@ -224,6 +224,11 @@ class PanAccessSingleton:
             # Reintentar la llamada con la nueva sesión
             logger.info(f"Reintentando llamada '{func_name}' con nueva sesión...")
             return self.client.call(func_name, parameters, timeout)
+        except PanAccessAPIError as e:
+            # Si es un error de permisos, no reintentar con nuevo login.
+            if getattr(e, "error_code", None) == "no_access_to_function":
+                raise
+            raise
     
     def get_client(self) -> PanAccessClient:
         """

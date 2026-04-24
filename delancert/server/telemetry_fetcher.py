@@ -14,12 +14,13 @@ IMPORTANTE: Este módulo es el ÚNICO punto de contacto con PanAccess para obten
 Los módulos de análisis (analytics.py, etc.) trabajan exclusivamente con la BD local.
 """
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 from delancert.server.panaccess_singleton import get_panaccess
 from delancert.models import TelemetryRecordEntryDelancer
-from delancert.exceptions import PanAccessException
+from delancert.exceptions import PanAccessException, PanAccessAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -198,26 +199,58 @@ def get_telemetry_records(
     try:
         # Obtener el singleton (maneja sesión automáticamente)
         panaccess = get_panaccess()
-        
-        logger.info(f"Llamando a PanAccess getListOfTelemetryRecords (offset={offset}, limit={limit})...")
-        
-        # Llamar a PanAccess usando el singleton
-        try:
-            response = panaccess.call(
-                func_name="getListOfTelemetryRecords",
-                parameters=parameters,
-                timeout=120
-            )
-            logger.info(f"Respuesta recibida de PanAccess exitosamente")
-        except Exception as e:
-            logger.error(f"Error en llamada a PanAccess: {str(e)}", exc_info=True)
-            raise
+
+        # Permitir configurar el nombre de la función por env var.
+        # Esto es clave porque algunos ambientes PanAccess exponen la telemetría con otro nombre,
+        # o el usuario/token no tiene permiso para ciertas funciones.
+        env_func = os.getenv("PANACCESS_TELEMETRY_FUNCTION", "").strip()
+        candidates = [env_func] if env_func else []
+        # Fallbacks comunes (ajústalos si tu PanAccess usa otro nombre)
+        candidates += [
+            "getListOfTelemetryRecords",
+            "getListOfTelemetryRecordEntries",
+            "getTelemetryRecords",
+        ]
+        # Deduplicar conservando orden
+        seen = set()
+        candidates = [c for c in candidates if c and not (c in seen or seen.add(c))]
+
+        last_perm_error: Optional[Exception] = None
+        response = None
+        for func_name in candidates:
+            logger.info(f"Llamando a PanAccess {func_name} (offset={offset}, limit={limit})...")
+            try:
+                response = panaccess.call(
+                    func_name=func_name,
+                    parameters=parameters,
+                    timeout=120
+                )
+                logger.info("Respuesta recibida de PanAccess exitosamente")
+                break
+            except PanAccessAPIError as e:
+                # Si es permisos insuficientes, probar el siguiente candidato.
+                if getattr(e, "error_code", None) == "no_access_to_function":
+                    last_perm_error = e
+                    logger.warning(f"Sin permisos para '{func_name}'. Probando alternativa si existe.")
+                    continue
+                raise
+            except Exception as e:
+                logger.error(f"Error en llamada a PanAccess ({func_name}): {str(e)}", exc_info=True)
+                raise
+
+        if response is None:
+            if last_perm_error is not None:
+                raise PanAccessException(
+                    f"PanAccess denegó permisos para funciones de telemetría. "
+                    f"Probadas: {', '.join(candidates)}. Detalle: {last_perm_error}"
+                )
+            raise PanAccessException("No se obtuvo respuesta de PanAccess (sin detalles).")
         
         # Verificar si la llamada fue exitosa
         if not response.get("success"):
             error_message = response.get("errorMessage", "Error desconocido")
             logger.error(f"❌ Error al obtener registros: {error_message}")
-            raise PanAccessException(f"Error en getListOfTelemetryRecords: {error_message}")
+            raise PanAccessException(f"Error al obtener telemetría: {error_message}")
         
         # Extraer datos
         answer = response.get("answer", {})

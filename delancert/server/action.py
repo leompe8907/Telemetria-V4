@@ -14,7 +14,7 @@ from delancert.server.telemetry_fetcher import (
     extract_timestamp_details
 )
 from delancert.server.ott_merger import merge_ott_records
-from delancert.exceptions import PanAccessException
+from delancert.exceptions import PanAccessException, PanAccessAPIError
 from datetime import datetime, date
 
 logger = logging.getLogger(__name__)
@@ -244,7 +244,26 @@ class TelemetrySyncView(APIView):
                     "error": "Error de PanAccess",
                     "message": str(e)
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_502_BAD_GATEWAY
+            )
+        except PanAccessAPIError as e:
+            # Mapear permisos insuficientes a 502 (error upstream de configuración)
+            if getattr(e, "error_code", None) == "no_access_to_function":
+                return Response(
+                    {
+                        "success": False,
+                        "error": "Permisos insuficientes en PanAccess",
+                        "message": str(e),
+                    },
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            return Response(
+                {
+                    "success": False,
+                    "error": "Error de API PanAccess",
+                    "message": str(e),
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
             )
         except Exception as e:
             logger.error(f"Error inesperado: {str(e)}", exc_info=True)

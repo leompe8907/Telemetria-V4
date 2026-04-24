@@ -159,21 +159,34 @@ class PanAccessClient:
                     error_message = json_response.get("errorMessage", "Error desconocido")
                     logger.error(f"Llamada '{func_name}' falló: {error_message}")
                     
-                    # Si el error es de sesión o permisos, limpiar sessionId
+                    # Clasificar error: sesión vs permisos vs genérico.
+                    # Importante: un error de permisos NO se arregla relogueando;
+                    # si lo tratamos como sesión, entramos en un loop de logins.
                     error_lower = error_message.lower()
-                    is_session_error = (
-                        "session" in error_lower or 
-                        "logged" in error_lower or 
+                    is_permission_error = (
                         "permission" in error_lower or
-                        "do not have" in error_lower
+                        "do not have the permission" in error_lower or
+                        "no permission" in error_lower
+                    )
+                    is_session_error = (
+                        "session" in error_lower or
+                        "logged" in error_lower or
+                        "invalid session" in error_lower or
+                        "sessionid" in error_lower
                     )
                     
-                    if is_session_error:
-                        logger.warning(f"Error de sesión/permisos '{func_name}', limpiando sessionId")
-                        self.session_id = None
-                        raise PanAccessSessionError(
-                            f"Error de sesión: {error_message}"
+                    if is_permission_error:
+                        # Mantener session_id: el problema es de privilegios del usuario/token.
+                        raise PanAccessAPIError(
+                            f"Permisos insuficientes para ejecutar '{func_name}': {error_message}",
+                            status_code=response.status_code,
+                            error_code="no_access_to_function",
                         )
+                    
+                    if is_session_error:
+                        logger.warning(f"Error de sesión '{func_name}', limpiando sessionId")
+                        self.session_id = None
+                        raise PanAccessSessionError(f"Error de sesión: {error_message}")
                     
                     raise PanAccessAPIError(
                         f"Error en la respuesta de PanAccess: {error_message}",
