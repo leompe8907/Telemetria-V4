@@ -3,7 +3,7 @@ from __future__ import annotations
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from delancert.utils.api_key_permission import HasTelemetryApiKey
+from delancert.utils.api_key_permission import HasTelemetryReadApiKey
 
 from delancert.analytics.common import parse_date_range
 from delancert.analytics.overview import overview
@@ -20,7 +20,7 @@ def _get_range(request):
 
 
 class DashboardOverviewView(APIView):
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryReadApiKey]
 
     def get(self, request):
         try:
@@ -31,7 +31,7 @@ class DashboardOverviewView(APIView):
 
 
 class DashboardTopChannelsView(APIView):
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryReadApiKey]
 
     def get(self, request):
         try:
@@ -43,7 +43,7 @@ class DashboardTopChannelsView(APIView):
 
 
 class DashboardChannelAudienceView(APIView):
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryReadApiKey]
 
     def get(self, request):
         try:
@@ -54,7 +54,7 @@ class DashboardChannelAudienceView(APIView):
 
 
 class DashboardPeakHoursByChannelView(APIView):
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryReadApiKey]
 
     def get(self, request):
         try:
@@ -66,7 +66,7 @@ class DashboardPeakHoursByChannelView(APIView):
 
 
 class DashboardTemporalView(APIView):
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryReadApiKey]
 
     def get(self, request):
         try:
@@ -78,7 +78,7 @@ class DashboardTemporalView(APIView):
 
 
 class DashboardUserProfileView(APIView):
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryReadApiKey]
 
     def get(self, request, subscriber_code: str):
         try:
@@ -89,7 +89,7 @@ class DashboardUserProfileView(APIView):
 
 
 class DashboardUserRangeView(APIView):
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryReadApiKey]
 
     def get(self, request, subscriber_code: str):
         try:
@@ -102,7 +102,7 @@ class DashboardUserRangeView(APIView):
 
 
 class DashboardUsersGeneralView(APIView):
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryReadApiKey]
 
     def get(self, request):
         try:

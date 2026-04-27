@@ -153,6 +153,29 @@ CORS_ALLOWED_ORIGINS = CORSConfig.ALLOWED_ORIGINS
 CORS_ALLOW_CREDENTIALS = CORSConfig.ALLOW_CREDENTIALS
 CSRF_TRUSTED_ORIGINS = CORSConfig.TRUSTED_ORIGINS
 
+# =============================================================================
+# Cache (Redis recomendado en producción)
+# =============================================================================
+
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+if REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": REDIS_URL,
+            "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+            "KEY_PREFIX": "telemetria",
+        }
+    }
+else:
+    # Fallback local (dev)
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "telemetria-locmem",
+        }
+    }
+
 # ============================================================================
 # CONFIGURACIÓN DE LOGGING
 # ============================================================================

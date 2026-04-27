@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 
 class TelemetryBase(models.Model):
     """Modelo base abstracto con todos los campos comunes"""
@@ -160,4 +161,52 @@ class MergedTelemetricEndVODDelancer(TelemetryBase):
             models.Index(fields=['dataName']),
             models.Index(fields=['deviceId', 'dataDate']),
             models.Index(fields=['recordId']),
+        ]
+
+
+class TelemetryJobRun(models.Model):
+    """
+    Auditoría de ejecuciones operativas (sync/merge/run).
+    Guarda métricas y errores para inspección sin depender de logs.
+    """
+
+    class JobType(models.TextChoices):
+        RUN = "run", "run"
+        SYNC = "sync", "sync"
+        MERGE_OTT = "merge_ott", "merge_ott"
+        INTEGRITY_CHECK = "integrity_check", "integrity_check"
+
+    class JobStatus(models.TextChoices):
+        SUCCESS = "success", "success"
+        ERROR = "error", "error"
+
+    job_type = models.CharField(max_length=32, choices=JobType.choices, db_index=True)
+    status = models.CharField(max_length=16, choices=JobStatus.choices, db_index=True)
+
+    started_at = models.DateTimeField(default=timezone.now, db_index=True)
+    finished_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    duration_ms = models.IntegerField(null=True, blank=True)
+
+    # Métricas (sync)
+    downloaded = models.IntegerField(null=True, blank=True)
+    saved = models.IntegerField(null=True, blank=True)
+    skipped = models.IntegerField(null=True, blank=True)
+    errors = models.IntegerField(null=True, blank=True)
+    highest_record_id_before = models.IntegerField(null=True, blank=True)
+    highest_record_id_after = models.IntegerField(null=True, blank=True)
+
+    # Métricas (merge)
+    merged_saved = models.IntegerField(null=True, blank=True)
+    merged_deleted_existing = models.IntegerField(null=True, blank=True)
+    merge_backfill_last_n = models.IntegerField(null=True, blank=True)
+
+    # Error
+    error_message = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "telemetry_job_run"
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["job_type", "started_at"]),
+            models.Index(fields=["status", "started_at"]),
         ]

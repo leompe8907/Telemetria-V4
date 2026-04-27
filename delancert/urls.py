@@ -1,6 +1,7 @@
 from django.urls import path
 from delancert.server.action import TelemetrySyncView, MergeOTTView, TelemetryRunView
 from delancert.server.health import TelemetryHealthView
+from delancert.server.jobs import TelemetryJobRunsView
 from delancert.server.dashboard import (
     DashboardOverviewView,
     DashboardTopChannelsView,
@@ -17,6 +18,7 @@ urlpatterns = [
     path('telemetry/merge/ott/', MergeOTTView.as_view(), name='telemetry-merge-ott'),
     path('telemetry/run/', TelemetryRunView.as_view(), name='telemetry-run'),
     path("health/", TelemetryHealthView.as_view(), name="telemetry-health"),
+    path("jobs/runs/", TelemetryJobRunsView.as_view(), name="telemetry-job-runs"),
     # Dashboard API
     path("dashboard/overview/", DashboardOverviewView.as_view(), name="dashboard-overview"),
     path("dashboard/channels/top/", DashboardTopChannelsView.as_view(), name="dashboard-top-channels"),

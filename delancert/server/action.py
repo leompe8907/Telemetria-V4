@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from delancert.utils.api_key_permission import HasTelemetryApiKey
+from delancert.utils.api_key_permission import HasTelemetryWriteApiKey
 import logging
 import math
 from decimal import Decimal
@@ -19,6 +19,8 @@ from datetime import datetime, date
 
 logger = logging.getLogger(__name__)
 from delancert.utils.rate_limit import acquire_rate_limit
+from django.utils import timezone
+from delancert.models import TelemetryJobRun
 
 def _serialize_for_json(obj):
     """
@@ -102,7 +104,7 @@ class TelemetrySyncView(APIView):
     - Si la BD está vacía: descarga un lote de registros (o max_records si se especifica)
     - Si la BD tiene registros: descarga solo los NUEVOS desde el último recordId
     """
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryWriteApiKey]
     
     def post(self, request):
         """
@@ -293,7 +295,7 @@ class MergeOTTView(APIView):
     Fusiona el dataName de actionId=7 a actionId=8 cuando comparten el mismo dataId.
     Solo procesa registros nuevos desde el último recordId guardado.
     """
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryWriteApiKey]
     
     def post(self, request):
         """
@@ -403,9 +405,15 @@ class TelemetryRunView(APIView):
     Endpoint operativo: ejecuta sync + merge OTT en una sola llamada.
     """
 
-    permission_classes = [HasTelemetryApiKey]
+    permission_classes = [HasTelemetryWriteApiKey]
 
     def post(self, request):
+        job = TelemetryJobRun.objects.create(
+            job_type=TelemetryJobRun.JobType.RUN,
+            status=TelemetryJobRun.JobStatus.SUCCESS,
+            started_at=timezone.now(),
+            merge_backfill_last_n=int(request.data.get("backfill_last_n", 0) or 0),
+        )
         try:
             rl = acquire_rate_limit("telemetry_run", ttl_seconds=60)
             if not rl.allowed:
@@ -465,6 +473,25 @@ class TelemetryRunView(APIView):
 
             # 2) Merge OTT (incremental + backfill opcional)
             merge_result = merge_ott_records(batch_size=merge_batch_size, backfill_last_n=backfill_last_n)
+            finished_at = timezone.now()
+            job.finished_at = finished_at
+            job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+            job.downloaded = total_downloaded
+            job.saved = total_saved
+            job.skipped = total_skipped
+            job.errors = total_errors
+            job.highest_record_id_before = highest_id_before
+            job.highest_record_id_after = highest_id_after
+            job.merged_saved = int((merge_result or {}).get("saved_records") or 0)
+            job.merged_deleted_existing = int((merge_result or {}).get("deleted_existing") or 0)
+            job.merge_backfill_last_n = backfill_last_n
+            job.status = TelemetryJobRun.JobStatus.SUCCESS
+            job.save(update_fields=[
+                "finished_at","duration_ms","downloaded","saved","skipped","errors",
+                "highest_record_id_before","highest_record_id_after",
+                "merged_saved","merged_deleted_existing","merge_backfill_last_n",
+                "status",
+            ])
 
             return Response(
                 {
@@ -485,9 +512,21 @@ class TelemetryRunView(APIView):
                 status=status.HTTP_200_OK,
             )
         except ValueError as e:
+            finished_at = timezone.now()
+            job.finished_at = finished_at
+            job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+            job.status = TelemetryJobRun.JobStatus.ERROR
+            job.error_message = str(e)
+            job.save(update_fields=["finished_at","duration_ms","status","error_message"])
             return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Error en telemetry run: {str(e)}", exc_info=True)
+            finished_at = timezone.now()
+            job.finished_at = finished_at
+            job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+            job.status = TelemetryJobRun.JobStatus.ERROR
+            job.error_message = str(e)
+            job.save(update_fields=["finished_at","duration_ms","status","error_message"])
             return Response(
                 {"success": False, "error": "Error en telemetry run", "message": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,

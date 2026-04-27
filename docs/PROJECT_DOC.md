@@ -206,6 +206,8 @@ python manage.py telemetry_sync --merge-ott
   - muestra `max_record_id` de tabla raw y tabla merged OTT, conteos últimas 24h y lag estimado.
 - **Run (sync + merge)**: `POST /delancert/telemetry/run/`
   - ejecuta sincronización incremental y luego merge OTT (con backfill opcional).
+- **Runs (auditoría)**: `GET /delancert/jobs/runs/?limit=20`
+  - lista ejecuciones recientes (solo lectura).
 - **Integrity check (CLI)**:
 
 ```bash
@@ -220,7 +222,54 @@ Los endpoints operativos están protegidos por una API key cuando `DEBUG=False`.
 
 Configurar en `.env`:
 
-- `TELEMETRIA_API_KEY=...`
+- `TELEMETRIA_API_KEY_RW=...` (sync/merge/run)
+- `TELEMETRIA_API_KEY_RO=...` (health/dashboard)
+
+Compatibilidad:
+- `TELEMETRIA_API_KEY=...` (sirve para todo)
+
+## Cache (Redis recomendado)
+Si vas a correr más de un proceso (varios workers/instancias), se recomienda Redis para:
+- rate limiting consistente
+- locks anti-stampede del cache de analytics
+
+Configurar en `.env`:
+- `REDIS_URL=redis://localhost:6379/0`
+
+## Checklist (estado actual y próximos pasos)
+
+### Implementado
+- **PanAccess**
+  - Cliente con retry/backoff, manejo de sesión y errores.
+  - Función de telemetría configurable: `PANACCESS_TELEMETRY_FUNCTION` (con fallbacks).
+- **Ingesta incremental + no duplicados**
+  - Tabla raw: `TelemetryRecordEntryDelancer`.
+  - Dedupe por `recordId` único + guardado idempotente (`ignore_conflicts`).
+- **Merge OTT 7/8 incremental**
+  - Tabla merged: `MergedTelemetricOTTDelancer`.
+  - `backfill_last_n` para corregir “llegadas tardías” de actionId=7.
+- **Operación**
+  - `POST /delancert/telemetry/run/` (sync + merge) con rate limit.
+  - `GET /delancert/health/` (solo lectura).
+  - `python manage.py telemetry_integrity_check --hours 24`.
+- **Seguridad**
+  - API Keys separadas: `TELEMETRIA_API_KEY_RW` y `TELEMETRIA_API_KEY_RO` (compat `TELEMETRIA_API_KEY`).
+- **Cache**
+  - Cache de analytics con mitigación simple de stampede.
+  - `CACHES` con Redis si `REDIS_URL` está configurado.
+- **Dashboard API (backend)**
+  - Endpoints `/delancert/dashboard/*` (overview/channels/temporal/users) protegidos con key RO.
+
+### Próximo paso recomendado (backend)
+- **Auditoría de jobs**
+  - Modelo `TelemetryJobRun` para registrar ejecuciones (run/sync/merge): inicio/fin, status, métricas, errores.
+  - Endpoint read-only para ver últimos runs (opcional).
+
+### Backlog (por prioridad)
+- **Tests mínimos**: API key, rate limit, parse de fechas, `telemetry/run`.
+- **Agregados/materialización**: tablas diarias (por canal/fecha, por usuario/fecha) para acelerar analytics a gran escala.
+- **Alertas**: lag alto, errores en runs, 24h sin datos nuevos.
+- **UI Dashboard (frontend)**: consumir `/delancert/dashboard/*` (cuando el backend esté estable).
 
 
 
