@@ -201,3 +201,13 @@ python manage.py telemetry_sync --merge-ott
 - Definir modelo `TelemetryEvent` (silver) y agregados (gold).
 - Añadir Celery + Redis si se habilitan pipelines automáticos.
 
+## Operación (Health / Integridad)
+- **Health (solo lectura)**: `GET /delancert/health/`
+  - muestra `max_record_id` de tabla raw y tabla merged OTT, conteos últimas 24h y lag estimado.
+- **Integrity check (CLI)**:
+
+```bash
+python manage.py telemetry_integrity_check --hours 24
+```
+
+
