@@ -18,7 +18,11 @@ from delancert.models import TelemetryRecordEntryDelancer, MergedTelemetricOTTDe
 logger = logging.getLogger(__name__)
 
 
-def merge_ott_records(max_record_id: Optional[int] = None, batch_size: int = 500) -> dict:
+def merge_ott_records(
+    max_record_id: Optional[int] = None,
+    batch_size: int = 500,
+    backfill_last_n: int = 0,
+) -> dict:
     """
     Fusiona registros OTT (actionId 7 y 8) y los guarda en MergedTelemetricOTTDelancer.
 
@@ -30,6 +34,7 @@ def merge_ott_records(max_record_id: Optional[int] = None, batch_size: int = 500
     Args:
         max_record_id: recordId máximo ya procesado (None => se toma el máximo de la tabla destino)
         batch_size: tamaño de lote para bulk_create
+        backfill_last_n: si > 0, re-procesa también los últimos N recordIds (útil si actionId=7 llega tarde)
 
     Returns:
         Métricas del merge.
@@ -39,7 +44,31 @@ def merge_ott_records(max_record_id: Optional[int] = None, batch_size: int = 500
         max_record_id = max_record_result["max_record"] or 0
         logger.info(f"Obtenido max_record_id de BD: {max_record_id}")
 
-    logger.info(f"Iniciando merge OTT desde recordId {max_record_id}")
+    if backfill_last_n < 0:
+        backfill_last_n = 0
+
+    # Para backfill: re-procesar una ventana reciente y "reemplazar" esos registros en la tabla destino
+    start_record_id = max(0, max_record_id - backfill_last_n)
+    logger.info(
+        "Iniciando merge OTT "
+        f"(max_record_id={max_record_id}, backfill_last_n={backfill_last_n}, start_record_id={start_record_id})"
+    )
+
+    # Salida rápida: si no hay actionId=8 nuevos (ni ventana a backfill), no hacer nada.
+    if backfill_last_n == 0:
+        has_new = TelemetryRecordEntryDelancer.objects.filter(actionId=8, recordId__gt=max_record_id).exists()
+        if not has_new:
+            return {
+                "total_processed": 0,
+                "merged_records": 0,
+                "saved_records": 0,
+                "skipped_records": 0,
+                "errors": 0,
+                "start_record_id": start_record_id,
+                "max_record_id": max_record_id,
+                "backfill_last_n": backfill_last_n,
+                "deleted_existing": 0,
+            }
 
     # Subquery: dataName más reciente (por recordId) para actionId=7 y mismo dataId
     latest_action7_name = (
@@ -51,7 +80,7 @@ def merge_ott_records(max_record_id: Optional[int] = None, batch_size: int = 500
     )
 
     action8_records = (
-        TelemetryRecordEntryDelancer.objects.filter(actionId=8, recordId__gt=max_record_id, dataId__isnull=False)
+        TelemetryRecordEntryDelancer.objects.filter(actionId=8, recordId__gt=start_record_id, dataId__isnull=False)
         .annotate(action7_data_name=Subquery(latest_action7_name))
         .order_by("recordId")
     )
@@ -66,6 +95,10 @@ def merge_ott_records(max_record_id: Optional[int] = None, batch_size: int = 500
             "saved_records": 0,
             "skipped_records": 0,
             "errors": 0,
+            "start_record_id": start_record_id,
+            "max_record_id": max_record_id,
+            "backfill_last_n": backfill_last_n,
+            "deleted_existing": 0,
         }
 
     merged_objects: List[MergedTelemetricOTTDelancer] = []
@@ -73,6 +106,13 @@ def merge_ott_records(max_record_id: Optional[int] = None, batch_size: int = 500
     skipped_count = 0
     error_count = 0
     saved_total = 0
+    deleted_existing = 0
+
+    # Si estamos en modo backfill, eliminar previamente el rango para reinsertar con dataName corregido.
+    # Esto funciona porque `recordId` es unique en la tabla destino.
+    if start_record_id < max_record_id:
+        deleted_existing = MergedTelemetricOTTDelancer.objects.filter(recordId__gt=start_record_id).delete()[0]
+        logger.info(f"Backfill activo: eliminados {deleted_existing} registros existentes (recordId > {start_record_id})")
 
     for record in action8_records.iterator(chunk_size=1000):
         try:
@@ -131,6 +171,10 @@ def merge_ott_records(max_record_id: Optional[int] = None, batch_size: int = 500
         "saved_records": saved_total,
         "skipped_records": skipped_count,
         "errors": error_count,
+        "start_record_id": start_record_id,
+        "max_record_id": max_record_id,
+        "backfill_last_n": backfill_last_n,
+        "deleted_existing": deleted_existing,
     }
 
     logger.info(

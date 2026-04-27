@@ -73,9 +73,9 @@ def _serialize_for_json(obj):
         except (TypeError, AttributeError):
             pass
     
-    # Manejar tipos de NumPy/Pandas
+    # Manejar tipos de NumPy/Pandas (opcional)
     try:
-        import numpy as np
+        import numpy as np  # type: ignore[import-not-found]
         if isinstance(obj, (np.integer, np.floating)):
             val = float(obj)
             if math.isnan(val) or math.isinf(val):
@@ -301,13 +301,18 @@ class MergeOTTView(APIView):
                 max_record_id = int(max_record_id)
             
             batch_size = int(request.data.get('batch_size', 500))
+            backfill_last_n = int(request.data.get("backfill_last_n", 0))
             
-            logger.info(f"Merge OTT iniciado - max_record_id={max_record_id}, batch_size={batch_size}")
+            logger.info(
+                f"Merge OTT iniciado - max_record_id={max_record_id}, batch_size={batch_size}, "
+                f"backfill_last_n={backfill_last_n}"
+            )
             
             # Ejecutar merge
             result = merge_ott_records(
                 max_record_id=max_record_id,
-                batch_size=batch_size
+                batch_size=batch_size,
+                backfill_last_n=backfill_last_n,
             )
             
             # Preparar respuesta

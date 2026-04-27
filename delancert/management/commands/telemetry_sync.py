@@ -16,6 +16,7 @@ class Command(BaseCommand):
         parser.add_argument("--no-process-timestamps", action="store_true", default=False)
         parser.add_argument("--merge-ott", action="store_true", default=False)
         parser.add_argument("--merge-batch-size", type=int, default=500)
+        parser.add_argument("--merge-backfill-last-n", type=int, default=0)
 
     def handle(self, *args, **options):
         limit = options["limit"]
@@ -30,6 +31,9 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f"Guardados: {result.get('saved_records')} | omitidos: {result.get('skipped_records')} | errores: {result.get('errors')}"))
 
         if options["merge_ott"]:
-            merge_result = merge_ott_records(batch_size=options["merge_batch_size"])
+            merge_result = merge_ott_records(
+                batch_size=options["merge_batch_size"],
+                backfill_last_n=options["merge_backfill_last_n"],
+            )
             self.stdout.write(self.style.SUCCESS(f"Merge OTT: {merge_result}"))
 
