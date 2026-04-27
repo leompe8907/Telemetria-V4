@@ -10,6 +10,7 @@ from rest_framework.test import APITestCase
 from delancert.analytics.common import parse_date_range
 from delancert.models import TelemetryJobRun
 from delancert.utils.rate_limit import acquire_rate_limit
+from delancert.exceptions import PanAccessAPIError
 
 
 @override_settings(
@@ -55,6 +56,11 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
         self.client.credentials(HTTP_X_TELEMETRIA_KEY="ro-key")
         r = self.client.post(url, data={"limit": 1}, format="json")
         self.assertEqual(r.status_code, 403)
+
+    def test_ops_alerts_requires_api_key(self):
+        url = reverse("telemetry-ops-alerts")
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 401)
 
     @patch("delancert.server.action.merge_ott_records")
     @patch("delancert.server.action.save_telemetry_records")
@@ -118,3 +124,45 @@ class TelemetriaUtilsTests(APITestCase):
     def test_parse_date_range_requires_both(self):
         with self.assertRaises(ValueError):
             parse_date_range("2025-12-01", None)
+
+    @patch("delancert.server.telemetry_fetcher.get_panaccess")
+    def test_panaccess_permission_error_triggers_one_session_refresh(self, mock_get_panaccess):
+        """
+        Si PanAccess responde 'no_access_to_function' para todas las funciones candidatas,
+        hacemos un refresh de sesión (1 vez) y reintentamos.
+        """
+        mock_pan = mock_get_panaccess.return_value
+        calls = {"n": 0}
+
+        def _call(*args, **kwargs):
+            calls["n"] += 1
+            # Primer pass: 3 candidatos -> todos permission error
+            # Segundo pass: 1er candidato ya funciona
+            if calls["n"] <= 3:
+                raise PanAccessAPIError("no permission", error_code="no_access_to_function")
+            return {"success": True, "answer": {"telemetryRecordEntries": []}}
+
+        mock_pan.call.side_effect = _call
+        mock_pan.reset_session.return_value = None
+
+        from delancert.server.telemetry_fetcher import get_telemetry_records
+
+        r = get_telemetry_records(offset=0, limit=10)
+        self.assertTrue(r.get("success"))
+        mock_pan.reset_session.assert_called_once()
+
+    @patch("delancert.server.ops.TelemetryJobRun")
+    def test_ops_alerts_ok_payload_shape(self, mock_jobrun):
+        # Solo valida que el endpoint devuelve un payload con claves esperadas (sin depender de BD real).
+        from delancert.server.ops import TelemetryOpsAlertsView
+        from rest_framework.test import APIRequestFactory
+
+        mock_jobrun.objects.filter.return_value.order_by.return_value.__getitem__.return_value = []
+
+        f = APIRequestFactory()
+        req = f.get("/delancert/ops/alerts/")
+        view = TelemetryOpsAlertsView.as_view(authentication_classes=[], permission_classes=[])
+        resp = view(req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("alerts", resp.data)
+        self.assertIn("signals", resp.data)

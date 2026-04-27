@@ -206,12 +206,50 @@ python manage.py telemetry_sync --merge-ott
   - muestra `max_record_id` de tabla raw y tabla merged OTT, conteos últimas 24h y lag estimado.
 - **Run (sync + merge)**: `POST /delancert/telemetry/run/`
   - ejecuta sincronización incremental y luego merge OTT (con backfill opcional).
+- **Run programado (Task Scheduler / CLI)**:
+
+```powershell
+# desde la carpeta backend/
+python manage.py telemetry_run --limit 1000 --batch-size 1000 --merge-batch-size 500 --backfill-last-n 0
+```
+
+Script listo para agendar:
+
+```powershell
+PowerShell.exe -ExecutionPolicy Bypass -File "C:\Users\Leonard\Desktop\Telemetria\backend\scripts\run_telemetry_job.ps1" -BackendDir "C:\Users\Leonard\Desktop\Telemetria\backend"
+```
+
+Ejemplo creando una tarea (cada 10 minutos):
+
+```powershell
+schtasks /Create /TN "Telemetria-Run" /SC MINUTE /MO 10 /F /TR "PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\Users\Leonard\Desktop\Telemetria\backend\scripts\run_telemetry_job.ps1\" -BackendDir \"C:\Users\Leonard\Desktop\Telemetria\backend\""
+```
+
+Ejemplo creando tarea de chequeo ops (cada 10 minutos):
+
+```powershell
+schtasks /Create /TN "Telemetria-Ops-Check" /SC MINUTE /MO 10 /F /TR "PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\Users\Leonard\Desktop\Telemetria\backend\scripts\run_ops_check.ps1\" -BackendDir \"C:\Users\Leonard\Desktop\Telemetria\backend\""
+```
 - **Runs (auditoría)**: `GET /delancert/jobs/runs/?limit=20`
   - lista ejecuciones recientes (solo lectura).
+- **Alertas operativas (solo lectura)**: `GET /delancert/ops/alerts/`
+  - detecta señales de degradación (lag alto, sin datos nuevos, runs fallidos seguidos).
+  - umbrales configurables por `.env`:
+    - `TELEMETRIA_ALERT_LAG_WARN=200`
+    - `TELEMETRIA_ALERT_LAG_CRIT=1000`
+    - `TELEMETRIA_ALERT_NO_NEW_MIN_WARN=30`
+    - `TELEMETRIA_ALERT_NO_NEW_MIN_CRIT=60`
+    - `TELEMETRIA_ALERT_CONSEC_FAIL_CRIT=3`
 - **Integrity check (CLI)**:
 
 ```bash
 python manage.py telemetry_integrity_check --hours 24
+```
+
+Chequeo ops por CLI (útil para agendar y usar exit codes):
+
+```bash
+python manage.py telemetry_ops_check
 ```
 
 ## Seguridad operativa (API Key)

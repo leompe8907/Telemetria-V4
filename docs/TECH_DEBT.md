@@ -57,3 +57,17 @@ Durante `pip install -r requirements.txt` pueden aparecer warnings de conflictos
 - Implementados y ejecutados tests mínimos (ver punto 2).
 - Auditoría de jobs ya estaba implementada; auditoría adicional para `sync/merge` individuales queda como mejora opcional.
 
+## 5) PanAccess: “sin permisos” cuando caduca la sesión
+**Síntoma**: después de un tiempo sin actividad, PanAccess puede responder con texto tipo “You do not have the permission…”
+aunque la causa real sea un `sessionId` caducado.
+
+**Estado**: RESUELTO ✅
+
+**Qué se hizo**:
+- Se añadió una heurística en `delancert/server/telemetry_fetcher.py`:
+  - Si **todas** las funciones candidatas fallan con `no_access_to_function`, se fuerza `reset_session()` y se reintenta **1 vez**.
+  - Evita loops infinitos y recupera el flujo cuando el mensaje de PanAccess es ambiguo.
+- Se agregó test con mocks en `delancert/tests.py` para validar que:
+  - se llama `reset_session()` **una sola vez**
+  - luego la llamada puede continuar si PanAccess vuelve a responder OK.
+

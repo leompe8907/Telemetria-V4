@@ -18,6 +18,8 @@ import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
+from django.utils import timezone
+
 from delancert.server.panaccess_singleton import get_panaccess
 from delancert.models import TelemetryRecordEntryDelancer
 from delancert.exceptions import PanAccessException, PanAccessAPIError
@@ -215,28 +217,45 @@ def get_telemetry_records(
         seen = set()
         candidates = [c for c in candidates if c and not (c in seen or seen.add(c))]
 
-        last_perm_error: Optional[Exception] = None
-        response = None
-        for func_name in candidates:
-            logger.info(f"Llamando a PanAccess {func_name} (offset={offset}, limit={limit})...")
+        def _try_candidates() -> tuple[Optional[dict], Optional[Exception]]:
+            last_perm: Optional[Exception] = None
+            resp: Optional[dict] = None
+            for fn in candidates:
+                logger.info(f"Llamando a PanAccess {fn} (offset={offset}, limit={limit})...")
+                try:
+                    resp = panaccess.call(func_name=fn, parameters=parameters, timeout=120)
+                    logger.info("Respuesta recibida de PanAccess exitosamente")
+                    return resp, None
+                except PanAccessAPIError as e:
+                    # Si es permisos insuficientes, probar el siguiente candidato.
+                    if getattr(e, "error_code", None) == "no_access_to_function":
+                        last_perm = e
+                        logger.warning(f"Sin permisos para '{fn}'. Probando alternativa si existe.")
+                        continue
+                    raise
+                except Exception as e:
+                    logger.error(f"Error en llamada a PanAccess ({fn}): {str(e)}", exc_info=True)
+                    raise
+            return None, last_perm
+
+        # 1) Primer intento normal
+        response, last_perm_error = _try_candidates()
+
+        # 2) Heurística anti “permiso” falso por session caducada:
+        # Si TODAS las funciones fallan con no_access_to_function, forzar un relogin una sola vez
+        # y reintentar (sin loop infinito).
+        if response is None and last_perm_error is not None:
             try:
-                response = panaccess.call(
-                    func_name=func_name,
-                    parameters=parameters,
-                    timeout=120
-                )
-                logger.info("Respuesta recibida de PanAccess exitosamente")
-                break
-            except PanAccessAPIError as e:
-                # Si es permisos insuficientes, probar el siguiente candidato.
-                if getattr(e, "error_code", None) == "no_access_to_function":
-                    last_perm_error = e
-                    logger.warning(f"Sin permisos para '{func_name}'. Probando alternativa si existe.")
-                    continue
-                raise
-            except Exception as e:
-                logger.error(f"Error en llamada a PanAccess ({func_name}): {str(e)}", exc_info=True)
-                raise
+                if hasattr(panaccess, "reset_session"):
+                    logger.warning(
+                        "PanAccess devolvió 'sin permisos' para todas las funciones de telemetría. "
+                        "Forzando refresh de sessionId (1 vez) y reintentando..."
+                    )
+                    panaccess.reset_session()
+                    response, last_perm_error = _try_candidates()
+            except Exception:
+                # Si falla el refresh, caerá al error original
+                pass
 
         if response is None:
             if last_perm_error is not None:
@@ -574,7 +593,10 @@ def save_telemetry_records(
             timestamp = None
             if record.get("timestamp"):
                 try:
-                    timestamp = datetime.strptime(record["timestamp"], "%Y-%m-%d %H:%M:%S")
+                    ts = datetime.strptime(record["timestamp"], "%Y-%m-%d %H:%M:%S")
+                    # PanAccess suele enviar timestamps sin tz. Para evitar warnings con USE_TZ=True,
+                    # los tratamos como timezone actual del proyecto.
+                    timestamp = timezone.make_aware(ts, timezone.get_current_timezone())
                 except (ValueError, TypeError):
                     logger.debug(f"Timestamp inválido recordId {record_id}")
             
