@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from delancert.utils.api_key_permission import HasTelemetryWriteApiKey
+from delancert.utils.api_key_authentication import TelemetryApiKeyAuthentication
 import logging
 import math
 from decimal import Decimal
@@ -105,6 +106,7 @@ class TelemetrySyncView(APIView):
     - Si la BD tiene registros: descarga solo los NUEVOS desde el último recordId
     """
     permission_classes = [HasTelemetryWriteApiKey]
+    authentication_classes = [TelemetryApiKeyAuthentication]
     
     def post(self, request):
         """
@@ -296,6 +298,7 @@ class MergeOTTView(APIView):
     Solo procesa registros nuevos desde el último recordId guardado.
     """
     permission_classes = [HasTelemetryWriteApiKey]
+    authentication_classes = [TelemetryApiKeyAuthentication]
     
     def post(self, request):
         """
@@ -406,6 +409,7 @@ class TelemetryRunView(APIView):
     """
 
     permission_classes = [HasTelemetryWriteApiKey]
+    authentication_classes = [TelemetryApiKeyAuthentication]
 
     def post(self, request):
         job = TelemetryJobRun.objects.create(

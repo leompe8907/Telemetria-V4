@@ -6,6 +6,7 @@ from rest_framework import status
 
 from delancert.models import TelemetryJobRun
 from delancert.utils.api_key_permission import HasTelemetryReadApiKey
+from delancert.utils.api_key_authentication import TelemetryApiKeyAuthentication
 
 
 class TelemetryJobRunsView(APIView):
@@ -14,6 +15,7 @@ class TelemetryJobRunsView(APIView):
     """
 
     permission_classes = [HasTelemetryReadApiKey]
+    authentication_classes = [TelemetryApiKeyAuthentication]
 
     def get(self, request):
         limit = int(request.query_params.get("limit", 20))

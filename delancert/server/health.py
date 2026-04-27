@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from delancert.utils.api_key_permission import HasTelemetryReadApiKey
+from delancert.utils.api_key_authentication import TelemetryApiKeyAuthentication
 
 from delancert.models import TelemetryRecordEntryDelancer, MergedTelemetricOTTDelancer
 
@@ -20,6 +21,7 @@ class TelemetryHealthView(APIView):
     """
 
     permission_classes = [HasTelemetryReadApiKey]
+    authentication_classes = [TelemetryApiKeyAuthentication]
 
     def get(self, request):
         now = timezone.now()
