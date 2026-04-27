@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from delancert.utils.api_key_permission import HasTelemetryApiKey
 import logging
 import math
 from decimal import Decimal
@@ -18,6 +18,7 @@ from delancert.exceptions import PanAccessException, PanAccessAPIError
 from datetime import datetime, date
 
 logger = logging.getLogger(__name__)
+from delancert.utils.rate_limit import acquire_rate_limit
 
 def _serialize_for_json(obj):
     """
@@ -101,7 +102,7 @@ class TelemetrySyncView(APIView):
     - Si la BD está vacía: descarga un lote de registros (o max_records si se especifica)
     - Si la BD tiene registros: descarga solo los NUEVOS desde el último recordId
     """
-    permission_classes = [AllowAny]
+    permission_classes = [HasTelemetryApiKey]
     
     def post(self, request):
         """
@@ -113,6 +114,14 @@ class TelemetrySyncView(APIView):
         - batch_size: Tamaño del lote para guardar en BD (default: 100)
         """
         try:
+            rl = acquire_rate_limit("telemetry_sync", ttl_seconds=30)
+            if not rl.allowed:
+                return Response(
+                    {"success": False, "error": "Rate limited", "retry_after_seconds": rl.retry_after_seconds},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    headers={"Retry-After": str(rl.retry_after_seconds)},
+                )
+
             # Obtener parámetros
             limit = int(request.data.get('limit', 1000))
             process_timestamps = request.data.get('process_timestamps', True)
@@ -284,7 +293,7 @@ class MergeOTTView(APIView):
     Fusiona el dataName de actionId=7 a actionId=8 cuando comparten el mismo dataId.
     Solo procesa registros nuevos desde el último recordId guardado.
     """
-    permission_classes = [AllowAny]
+    permission_classes = [HasTelemetryApiKey]
     
     def post(self, request):
         """
@@ -295,6 +304,14 @@ class MergeOTTView(APIView):
         - batch_size: Tamaño del lote para guardar (default: 500)
         """
         try:
+            rl = acquire_rate_limit("merge_ott", ttl_seconds=30)
+            if not rl.allowed:
+                return Response(
+                    {"success": False, "error": "Rate limited", "retry_after_seconds": rl.retry_after_seconds},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    headers={"Retry-After": str(rl.retry_after_seconds)},
+                )
+
             # Obtener parámetros
             max_record_id = request.data.get('max_record_id')
             if max_record_id is not None:
@@ -380,3 +397,98 @@ class MergeOTTView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
+class TelemetryRunView(APIView):
+    """
+    Endpoint operativo: ejecuta sync + merge OTT en una sola llamada.
+    """
+
+    permission_classes = [HasTelemetryApiKey]
+
+    def post(self, request):
+        try:
+            rl = acquire_rate_limit("telemetry_run", ttl_seconds=60)
+            if not rl.allowed:
+                return Response(
+                    {"success": False, "error": "Rate limited", "retry_after_seconds": rl.retry_after_seconds},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    headers={"Retry-After": str(rl.retry_after_seconds)},
+                )
+
+            limit = int(request.data.get("limit", 1000))
+            process_timestamps = request.data.get("process_timestamps", True)
+            batch_size = int(request.data.get("batch_size", 1000))
+            merge_batch_size = int(request.data.get("merge_batch_size", 500))
+            backfill_last_n = int(request.data.get("backfill_last_n", 0))
+
+            if isinstance(process_timestamps, str):
+                process_timestamps = process_timestamps.lower() in ("true", "1", "yes")
+
+            # 1) Sync (reusar la misma lógica que TelemetrySyncView, pero sin duplicar todo)
+            # Nota: por simplicidad, hacemos incremental si la BD no está vacía; si está vacía, paginamos.
+            total_downloaded = 0
+            total_saved = 0
+            total_skipped = 0
+            total_errors = 0
+
+            was_empty_before = is_database_empty()
+            highest_id_before = get_highest_record_id()
+
+            if is_database_empty():
+                offset = 0
+                while True:
+                    response = get_telemetry_records(offset=offset, limit=limit, order_by="recordId", order_dir="DESC")
+                    answer = response.get("answer", {})
+                    records = answer.get("telemetryRecordEntries", [])
+                    if not records:
+                        break
+                    if process_timestamps:
+                        records = extract_timestamp_details(records)
+                    total_downloaded += len(records)
+                    save_result = save_telemetry_records(records, batch_size=batch_size)
+                    total_saved += save_result["saved_records"]
+                    total_skipped += save_result["skipped_records"]
+                    total_errors += save_result["errors"]
+                    if len(records) < limit:
+                        break
+                    offset += limit
+            else:
+                records = fetch_telemetry_records_smart(limit=limit, process_timestamps=process_timestamps)
+                total_downloaded = len(records)
+                if records:
+                    save_result = save_telemetry_records(records, batch_size=batch_size)
+                    total_saved = save_result["saved_records"]
+                    total_skipped = save_result["skipped_records"]
+                    total_errors = save_result["errors"]
+
+            highest_id_after = get_highest_record_id()
+
+            # 2) Merge OTT (incremental + backfill opcional)
+            merge_result = merge_ott_records(batch_size=merge_batch_size, backfill_last_n=backfill_last_n)
+
+            return Response(
+                {
+                    "success": True,
+                    "sync": {
+                        "downloaded": total_downloaded,
+                        "saved": total_saved,
+                        "skipped": total_skipped,
+                        "errors": total_errors,
+                        "database_status": {
+                            "was_empty_before": was_empty_before,
+                            "highest_record_id_before": highest_id_before,
+                            "highest_record_id_after": highest_id_after,
+                        },
+                    },
+                    "merge_ott": merge_result,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except ValueError as e:
+            return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Error en telemetry run: {str(e)}", exc_info=True)
+            return Response(
+                {"success": False, "error": "Error en telemetry run", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

@@ -7,7 +7,7 @@ from django.db.models import Max, Count
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from delancert.utils.api_key_permission import HasTelemetryApiKey
 
 from delancert.models import TelemetryRecordEntryDelancer, MergedTelemetricOTTDelancer
 
@@ -19,7 +19,7 @@ class TelemetryHealthView(APIView):
     NO llama a PanAccess. Solo consulta la BD local.
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [HasTelemetryApiKey]
 
     def get(self, request):
         now = timezone.now()

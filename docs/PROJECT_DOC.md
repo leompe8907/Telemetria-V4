@@ -204,10 +204,23 @@ python manage.py telemetry_sync --merge-ott
 ## Operación (Health / Integridad)
 - **Health (solo lectura)**: `GET /delancert/health/`
   - muestra `max_record_id` de tabla raw y tabla merged OTT, conteos últimas 24h y lag estimado.
+- **Run (sync + merge)**: `POST /delancert/telemetry/run/`
+  - ejecuta sincronización incremental y luego merge OTT (con backfill opcional).
 - **Integrity check (CLI)**:
 
 ```bash
 python manage.py telemetry_integrity_check --hours 24
 ```
+
+## Seguridad operativa (API Key)
+Los endpoints operativos están protegidos por una API key cuando `DEBUG=False`.
+
+- **Header recomendado**: `X-Telemetria-Key: <TU_KEY>`
+- **Alternativa**: `Authorization: Api-Key <TU_KEY>`
+
+Configurar en `.env`:
+
+- `TELEMETRIA_API_KEY=...`
+
 
 
