@@ -214,3 +214,46 @@ class TelemetryJobRun(models.Model):
             models.Index(fields=["job_type", "started_at"]),
             models.Index(fields=["status", "started_at"]),
         ]
+
+
+class TelemetryChannelDailyAgg(models.Model):
+    """
+    Agregado diario por canal (dataName) basado en MergedTelemetricOTTDelancer.
+    Diseñado para acelerar dashboard a gran escala.
+    """
+
+    day = models.DateField(db_index=True)
+    channel = models.CharField(max_length=200, db_index=True)
+
+    views = models.IntegerField(default=0)
+    unique_users = models.IntegerField(default=0)
+    total_duration_seconds = models.BigIntegerField(default=0)
+
+    class Meta:
+        db_table = "telemetry_channel_daily_agg"
+        unique_together = (("day", "channel"),)
+        indexes = [
+            models.Index(fields=["day", "channel"]),
+            models.Index(fields=["channel", "day"]),
+        ]
+
+
+class TelemetryUserDailyAgg(models.Model):
+    """
+    Agregado diario por usuario (subscriberCode) basado en MergedTelemetricOTTDelancer.
+    """
+
+    day = models.DateField(db_index=True)
+    subscriber_code = models.CharField(max_length=50, db_index=True)
+
+    views = models.IntegerField(default=0)
+    unique_channels = models.IntegerField(default=0)
+    total_duration_seconds = models.BigIntegerField(default=0)
+
+    class Meta:
+        db_table = "telemetry_user_daily_agg"
+        unique_together = (("day", "subscriber_code"),)
+        indexes = [
+            models.Index(fields=["day", "subscriber_code"]),
+            models.Index(fields=["subscriber_code", "day"]),
+        ]

@@ -146,3 +146,65 @@ class TelemetryOpsAlertsView(APIView):
         }
         return Response(payload, status=status.HTTP_200_OK)
 
+
+class TelemetryOpsSummaryView(APIView):
+    """
+    Resumen operativo en una sola llamada:
+    - señales health (raw/merged/lag)
+    - alertas (ops/alerts)
+    - últimos job runs (RUN / SYNC / MERGE_OTT / INTEGRITY_CHECK)
+    """
+
+    permission_classes = [HasTelemetryReadApiKey]
+    authentication_classes = [TelemetryApiKeyAuthentication]
+
+    def get(self, request):
+        now = timezone.now()
+
+        raw_max = TelemetryRecordEntryDelancer.objects.aggregate(max_record_id=Max("recordId"))["max_record_id"] or 0
+        merged_max = MergedTelemetricOTTDelancer.objects.aggregate(max_record_id=Max("recordId"))["max_record_id"] or 0
+        lag = max(0, int(raw_max) - int(merged_max))
+
+        # Reusar lógica de alertas (sin duplicar reglas)
+        alerts_payload = TelemetryOpsAlertsView().get(request).data
+
+        last_runs = {}
+        for jt in (
+            TelemetryJobRun.JobType.RUN,
+            TelemetryJobRun.JobType.SYNC,
+            TelemetryJobRun.JobType.MERGE_OTT,
+            TelemetryJobRun.JobType.INTEGRITY_CHECK,
+        ):
+            r = TelemetryJobRun.objects.filter(job_type=jt).order_by("-started_at").first()
+            if not r:
+                last_runs[jt] = None
+            else:
+                last_runs[jt] = {
+                    "status": r.status,
+                    "started_at": r.started_at.isoformat() if r.started_at else None,
+                    "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                    "duration_ms": r.duration_ms,
+                    "downloaded": r.downloaded,
+                    "saved": r.saved,
+                    "skipped": r.skipped,
+                    "errors": r.errors,
+                    "highest_record_id_before": r.highest_record_id_before,
+                    "highest_record_id_after": r.highest_record_id_after,
+                    "merged_saved": r.merged_saved,
+                    "merged_deleted_existing": r.merged_deleted_existing,
+                    "merge_backfill_last_n": r.merge_backfill_last_n,
+                    "error_message": r.error_message,
+                }
+
+        payload = {
+            "time": now.isoformat(),
+            "health": {
+                "raw_max_record_id": raw_max,
+                "merged_ott_max_record_id": merged_max,
+                "lag_raw_minus_merged_record_id": lag,
+            },
+            "alerts": alerts_payload,
+            "last_runs": last_runs,
+        }
+        return Response(payload, status=status.HTTP_200_OK)
+

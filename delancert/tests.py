@@ -10,6 +10,7 @@ from rest_framework.test import APITestCase
 
 from delancert.analytics.common import parse_date_range
 from delancert.models import TelemetryJobRun
+from delancert.models import TelemetryChannelDailyAgg, TelemetryUserDailyAgg, MergedTelemetricOTTDelancer
 from delancert.utils.rate_limit import acquire_rate_limit
 from delancert.exceptions import PanAccessAPIError
 
@@ -60,6 +61,11 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
 
     def test_ops_alerts_requires_api_key(self):
         url = reverse("telemetry-ops-alerts")
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 401)
+
+    def test_ops_summary_requires_api_key(self):
+        url = reverse("telemetry-ops-summary")
         r = self.client.get(url)
         self.assertEqual(r.status_code, 401)
 
@@ -219,3 +225,46 @@ class TelemetriaUtilsTests(APITestCase):
         call_command("telemetry_integrity_check", hours=1)
         after = TelemetryJobRun.objects.filter(job_type=TelemetryJobRun.JobType.INTEGRITY_CHECK).count()
         self.assertEqual(after, before + 1)
+
+    def test_build_aggregates_creates_rows(self):
+        # Crear datos mínimos en merged_ott
+        from django.utils import timezone as dj_tz
+
+        d = dj_tz.localdate()
+        MergedTelemetricOTTDelancer.objects.create(
+            recordId=1,
+            actionId=8,
+            subscriberCode="u1",
+            dataName="ch1",
+            dataDuration=60,
+            dataDate=d,
+            timestamp=dj_tz.now(),
+        )
+        MergedTelemetricOTTDelancer.objects.create(
+            recordId=2,
+            actionId=8,
+            subscriberCode="u1",
+            dataName="ch1",
+            dataDuration=120,
+            dataDate=d,
+            timestamp=dj_tz.now(),
+        )
+        MergedTelemetricOTTDelancer.objects.create(
+            recordId=3,
+            actionId=8,
+            subscriberCode="u2",
+            dataName="ch2",
+            dataDuration=30,
+            dataDate=d,
+            timestamp=dj_tz.now(),
+        )
+
+        call_command("telemetry_build_aggregates", days=1)
+
+        self.assertEqual(TelemetryChannelDailyAgg.objects.count(), 2)
+        self.assertEqual(TelemetryUserDailyAgg.objects.count(), 2)
+
+        ch1 = TelemetryChannelDailyAgg.objects.get(day=d, channel="ch1")
+        self.assertEqual(ch1.views, 2)
+        self.assertEqual(ch1.unique_users, 1)
+        self.assertEqual(ch1.total_duration_seconds, 180)
