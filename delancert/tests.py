@@ -304,3 +304,51 @@ class TelemetriaUtilsTests(APITestCase):
         out = overview(DateRange(start=d, end=d))
         self.assertEqual(out["kpis"]["total_views"], 10)
         self.assertEqual(out["kpis"]["total_watch_hours"], 2.0)
+
+    def test_ml_build_dataset_watch_time_7d(self):
+        from django.utils import timezone as dj_tz
+        from django.core.management import call_command
+        from pathlib import Path
+        import csv
+
+        d0 = dj_tz.localdate()
+        # features lookback (d0-6 .. d0)
+        TelemetryUserDailyAgg.objects.create(day=d0, subscriber_code="u1", views=3, unique_channels=2, total_duration_seconds=300)
+        TelemetryUserDailyAgg.objects.create(day=d0, subscriber_code="u2", views=1, unique_channels=1, total_duration_seconds=60)
+
+        # target horizon (d0+1 .. d0+7)
+        from datetime import timedelta
+
+        MergedTelemetricOTTDelancer.objects.create(
+            recordId=1001,
+            actionId=8,
+            subscriberCode="u1",
+            dataName="ch1",
+            dataDuration=120,
+            dataDate=d0 + timedelta(days=1),
+            timestamp=dj_tz.now(),
+        )
+        MergedTelemetricOTTDelancer.objects.create(
+            recordId=1002,
+            actionId=8,
+            subscriberCode="u1",
+            dataName="ch2",
+            dataDuration=180,
+            dataDate=d0 + timedelta(days=2),
+            timestamp=dj_tz.now(),
+        )
+
+        out = Path("artifacts/ml/datasets/test_watch_time.csv")
+        if out.exists():
+            out.unlink()
+
+        call_command("ml_build_dataset", **{"as_of": d0.isoformat(), "lookback_days": 7, "horizon_days": 7, "output": str(out)})
+        self.assertTrue(out.exists())
+
+        rows = list(csv.DictReader(out.open("r", encoding="utf-8")))
+        # u1 y u2 están en features
+        by_u = {r["subscriber_code"]: r for r in rows}
+        self.assertIn("u1", by_u)
+        self.assertIn("u2", by_u)
+        self.assertEqual(int(by_u["u1"]["y_watch_seconds_next_horizon"]), 300)
+        self.assertEqual(int(by_u["u2"]["y_watch_seconds_next_horizon"]), 0)
