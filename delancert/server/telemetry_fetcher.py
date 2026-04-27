@@ -133,7 +133,7 @@ def extract_timestamp_details(data: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
 def get_telemetry_records(
     offset: int = 0,
-    limit: int = 100,
+    limit: int = 1000,
     order_by: str = "recordId",
     order_dir: str = "DESC"
 ) -> Dict[str, Any]:

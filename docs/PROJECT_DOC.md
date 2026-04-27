@@ -71,13 +71,32 @@ Objetivos iniciales recomendados (dependen de calidad de telemetría disponible)
 - (Fase posterior) **Next-content**: sugerencia del siguiente canal/stream por historial.
 
 ### 4) Automatización (Orquestación)
+- **Objetivo inmediato**: automatizar la sincronización desde PanAccess y el merge OTT (actionId 7/8)
+  para que el dashboard/consultas trabajen contra tablas locales.
+
+#### Opción A (rápida en Windows): Task Scheduler + comando Django
+Se agregó un comando de management para poder programarlo sin depender de Celery:
+
+```bash
+python manage.py telemetry_sync --limit 1000 --batch-size 1000 --merge-ott --merge-batch-size 500
+```
+
+- **Qué hace**:
+  - descarga registros nuevos desde PanAccess,
+  - guarda en `TelemetryRecordEntryDelancer`,
+  - ejecuta el merge OTT y guarda en `MergedTelemetricOTTDelancer`.
+
+Esto se puede ejecutar cada X minutos usando **Windows Task Scheduler**.
+
+#### Opción B (escalable): Celery + Redis (backlog)
+Cuando se requiera mayor throughput / reintentos robustos / jobs pesados:
+
 - Celery Beat:
-  - ingesta diaria,
-  - construcción de features,
-  - entrenamiento/re-entrenamiento,
-  - refresh de reportes.
+  - sync de telemetría (cada 5–15 min),
+  - merge OTT (cada 5–15 min, o inmediatamente después del sync),
+  - refresh de agregados/reportes.
 - Worker Celery:
-  - jobs pesados (ETL, entrenamiento, batch scoring).
+  - ETL pesado, ML training, batch scoring.
 
 ### 5) LLM (Traducción + Explicaciones)
 - **Traducción**: solo para strings dinámicos / explicaciones; UI base debe usar i18n tradicional.
@@ -172,6 +191,9 @@ Variables clave:
 pip install -r requirements.txt
 python manage.py migrate
 python manage.py runserver
+
+# sync manual (y merge OTT)
+python manage.py telemetry_sync --merge-ott
 ```
 
 ## Próximos pasos inmediatos

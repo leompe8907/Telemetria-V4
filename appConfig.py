@@ -1,7 +1,10 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# En Windows, variables como USERNAME/USER/HOST pueden existir en el sistema
+# y "pisar" las del .env (case-insensitive). Forzamos override para que el .env
+# sea la fuente de verdad en desarrollo.
+load_dotenv(override=True)
 
 def _csv(name: str):
     raw = os.getenv(name)
@@ -76,22 +79,24 @@ class DatabaseConfig:
     
 
 class PanaccessConfigDelancer:
-    DRM = os.getenv('drm')
-    USERNAME = os.getenv('username')
-    PASSWORD = os.getenv('password')
-    API_TOKEN = os.getenv('api_token')
+    # Evitar colisiones con env vars del sistema (Windows) usando PANACCESS_*.
+    # Mantenemos compatibilidad con las variables existentes (drm/username/...).
+    DRM = _first_env('PANACCESS_DRM', 'drm')
+    USERNAME = _first_env('PANACCESS_USERNAME', 'username')
+    PASSWORD = _first_env('PANACCESS_PASSWORD', 'password')
+    API_TOKEN = _first_env('PANACCESS_API_TOKEN', 'api_token')
 
     @classmethod
     def configure(cls):
         missing = []
         if not cls.DRM:
-            missing.append('drm')
+            missing.append('PANACCESS_DRM (o drm)')
         if not cls.USERNAME:
-            missing.append('username')
+            missing.append('PANACCESS_USERNAME (o username)')
         if not cls.PASSWORD:
-            missing.append('password')
+            missing.append('PANACCESS_PASSWORD (o password)')
         if not cls.API_TOKEN:
-            missing.append('api_token')
+            missing.append('PANACCESS_API_TOKEN (o api_token)')
         if missing:
             raise ValueError(f'Missing environment variables: {", ".join(missing)}')
         return cls

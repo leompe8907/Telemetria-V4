@@ -114,9 +114,9 @@ class TelemetrySyncView(APIView):
         """
         try:
             # Obtener parámetros
-            limit = int(request.data.get('limit', 100))
+            limit = int(request.data.get('limit', 1000))
             process_timestamps = request.data.get('process_timestamps', True)
-            batch_size = int(request.data.get('batch_size', 100))
+            batch_size = int(request.data.get('batch_size', 1000))
             
             if isinstance(process_timestamps, str):
                 process_timestamps = process_timestamps.lower() in ('true', '1', 'yes')
