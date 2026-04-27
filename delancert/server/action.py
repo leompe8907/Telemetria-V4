@@ -117,6 +117,7 @@ class TelemetrySyncView(APIView):
         - process_timestamps: Si procesar timestamps para extraer fecha/hora (default: true)
         - batch_size: Tamaño del lote para guardar en BD (default: 100)
         """
+        job = None
         try:
             rl = acquire_rate_limit("telemetry_sync", ttl_seconds=30)
             if not rl.allowed:
@@ -137,6 +138,12 @@ class TelemetrySyncView(APIView):
             # Estado inicial de la BD
             was_empty_before = is_database_empty()
             highest_id_before = get_highest_record_id()
+
+            job = TelemetryJobRun.objects.create(
+                job_type=TelemetryJobRun.JobType.SYNC,
+                status=TelemetryJobRun.JobStatus.SUCCESS,
+                started_at=timezone.now(),
+            )
             
             logger.info(f"Sincronización iniciada - limit={limit}, process_timestamps={process_timestamps}, batch_size={batch_size}")
             
@@ -225,6 +232,32 @@ class TelemetrySyncView(APIView):
             # Estado final de la BD
             is_empty_after = is_database_empty()
             highest_id_after = get_highest_record_id()
+
+            # Auditoría
+            if job is not None:
+                finished_at = timezone.now()
+                job.finished_at = finished_at
+                job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+                job.downloaded = total_downloaded
+                job.saved = total_saved
+                job.skipped = total_skipped
+                job.errors = total_errors
+                job.highest_record_id_before = highest_id_before
+                job.highest_record_id_after = highest_id_after
+                job.status = TelemetryJobRun.JobStatus.SUCCESS
+                job.save(
+                    update_fields=[
+                        "finished_at",
+                        "duration_ms",
+                        "downloaded",
+                        "saved",
+                        "skipped",
+                        "errors",
+                        "highest_record_id_before",
+                        "highest_record_id_after",
+                        "status",
+                    ]
+                )
             
             # Preparar respuesta
             response_data = {
@@ -250,6 +283,13 @@ class TelemetrySyncView(APIView):
             return Response(response_data, status=status.HTTP_200_OK)
             
         except PanAccessException as e:
+            if job is not None:
+                finished_at = timezone.now()
+                job.finished_at = finished_at
+                job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+                job.status = TelemetryJobRun.JobStatus.ERROR
+                job.error_message = str(e)[:2000]
+                job.save(update_fields=["finished_at", "duration_ms", "status", "error_message"])
             logger.error(f"Error de PanAccess: {str(e)}")
             return Response(
                 {
@@ -262,6 +302,13 @@ class TelemetrySyncView(APIView):
         except PanAccessAPIError as e:
             # Mapear permisos insuficientes a 502 (error upstream de configuración)
             if getattr(e, "error_code", None) == "no_access_to_function":
+                if job is not None:
+                    finished_at = timezone.now()
+                    job.finished_at = finished_at
+                    job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+                    job.status = TelemetryJobRun.JobStatus.ERROR
+                    job.error_message = str(e)[:2000]
+                    job.save(update_fields=["finished_at", "duration_ms", "status", "error_message"])
                 return Response(
                     {
                         "success": False,
@@ -270,6 +317,13 @@ class TelemetrySyncView(APIView):
                     },
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
+            if job is not None:
+                finished_at = timezone.now()
+                job.finished_at = finished_at
+                job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+                job.status = TelemetryJobRun.JobStatus.ERROR
+                job.error_message = str(e)[:2000]
+                job.save(update_fields=["finished_at", "duration_ms", "status", "error_message"])
             return Response(
                 {
                     "success": False,
@@ -279,6 +333,13 @@ class TelemetrySyncView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         except Exception as e:
+            if job is not None:
+                finished_at = timezone.now()
+                job.finished_at = finished_at
+                job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+                job.status = TelemetryJobRun.JobStatus.ERROR
+                job.error_message = str(e)[:2000]
+                job.save(update_fields=["finished_at", "duration_ms", "status", "error_message"])
             logger.error(f"Error inesperado: {str(e)}", exc_info=True)
             return Response(
                 {
@@ -308,6 +369,7 @@ class MergeOTTView(APIView):
         - max_record_id: RecordId máximo ya procesado (None = usar el máximo de la BD)
         - batch_size: Tamaño del lote para guardar (default: 500)
         """
+        job = None
         try:
             rl = acquire_rate_limit("merge_ott", ttl_seconds=30)
             if not rl.allowed:
@@ -324,6 +386,13 @@ class MergeOTTView(APIView):
             
             batch_size = int(request.data.get('batch_size', 500))
             backfill_last_n = int(request.data.get("backfill_last_n", 0))
+
+            job = TelemetryJobRun.objects.create(
+                job_type=TelemetryJobRun.JobType.MERGE_OTT,
+                status=TelemetryJobRun.JobStatus.SUCCESS,
+                started_at=timezone.now(),
+                merge_backfill_last_n=backfill_last_n,
+            )
             
             logger.info(
                 f"Merge OTT iniciado - max_record_id={max_record_id}, batch_size={batch_size}, "
@@ -345,10 +414,35 @@ class MergeOTTView(APIView):
             }
             
             logger.info(f"Merge OTT completado: {result}")
+
+            if job is not None:
+                finished_at = timezone.now()
+                job.finished_at = finished_at
+                job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+                job.merged_saved = int((result or {}).get("saved_records") or 0)
+                job.merged_deleted_existing = int((result or {}).get("deleted_existing") or 0)
+                job.status = TelemetryJobRun.JobStatus.SUCCESS
+                job.save(
+                    update_fields=[
+                        "finished_at",
+                        "duration_ms",
+                        "merged_saved",
+                        "merged_deleted_existing",
+                        "merge_backfill_last_n",
+                        "status",
+                    ]
+                )
             
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
+            if job is not None:
+                finished_at = timezone.now()
+                job.finished_at = finished_at
+                job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+                job.status = TelemetryJobRun.JobStatus.ERROR
+                job.error_message = str(e)[:2000]
+                job.save(update_fields=["finished_at", "duration_ms", "status", "error_message"])
             logger.error(f"Error en merge OTT: {str(e)}", exc_info=True)
             return Response(
                 {

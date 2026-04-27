@@ -49,10 +49,14 @@ class TelemetryRecordEntryDelancer(TelemetryBase):
         ordering = ['-timestamp']  # Cambié de '-created' a '-timestamp'
         indexes = [
             models.Index(fields=['actionId', 'timestamp']),
+            models.Index(fields=['actionId', 'recordId']),
             models.Index(fields=['recordId']),  # Ya es unique, pero el índice ayuda
             models.Index(fields=['timestamp']),
             models.Index(fields=['deviceId', 'timestamp']),
             models.Index(fields=['dataDate', 'timeDate']),  # Para filtros por fecha/hora
+            models.Index(fields=['subscriberCode', 'dataDate']),
+            models.Index(fields=['dataName']),
+            models.Index(fields=['dataDate', 'dataName']),
         ]
 
 

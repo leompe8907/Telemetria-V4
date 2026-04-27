@@ -230,6 +230,12 @@ Ejemplo creando tarea de chequeo ops (cada 10 minutos):
 ```powershell
 schtasks /Create /TN "Telemetria-Ops-Check" /SC MINUTE /MO 10 /F /TR "PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\Users\Leonard\Desktop\Telemetria\backend\scripts\run_ops_check.ps1\" -BackendDir \"C:\Users\Leonard\Desktop\Telemetria\backend\""
 ```
+
+Ejemplo creando tarea diaria de integrity check (03:00):
+
+```powershell
+schtasks /Create /TN "Telemetria-Integrity-Check" /SC DAILY /ST 03:00 /F /TR "PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\Users\Leonard\Desktop\Telemetria\backend\scripts\run_integrity_check.ps1\" -BackendDir \"C:\Users\Leonard\Desktop\Telemetria\backend\" -Hours 24"
+```
 - **Runs (auditoría)**: `GET /delancert/jobs/runs/?limit=20`
   - lista ejecuciones recientes (solo lectura).
 - **Alertas operativas (solo lectura)**: `GET /delancert/ops/alerts/`

@@ -19,6 +19,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 from django.utils import timezone
+from datetime import timedelta
 
 from delancert.server.panaccess_singleton import get_panaccess
 from delancert.models import TelemetryRecordEntryDelancer
@@ -597,6 +598,14 @@ def save_telemetry_records(
                     # PanAccess suele enviar timestamps sin tz. Para evitar warnings con USE_TZ=True,
                     # los tratamos como timezone actual del proyecto.
                     timestamp = timezone.make_aware(ts, timezone.get_current_timezone())
+                    # Normalización básica: evitar timestamps absurdamente "futuros" que rompen señales/analytics.
+                    # Tolerancia: 24h.
+                    if timestamp > timezone.now() + timedelta(hours=24):
+                        logger.warning(
+                            f"Timestamp futuro detectado recordId={record_id} ts={timestamp.isoformat()}; "
+                            "se guardará como NULL para evitar clock skew."
+                        )
+                        timestamp = None
                 except (ValueError, TypeError):
                     logger.debug(f"Timestamp inválido recordId {record_id}")
             

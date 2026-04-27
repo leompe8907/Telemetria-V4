@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from django.test import override_settings
 from django.urls import reverse
+from django.core.management import call_command
 from rest_framework.test import APITestCase
 
 from delancert.analytics.common import parse_date_range
@@ -61,6 +62,46 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
         url = reverse("telemetry-ops-alerts")
         r = self.client.get(url)
         self.assertEqual(r.status_code, 401)
+
+    @patch("delancert.server.action.get_highest_record_id")
+    @patch("delancert.server.action.is_database_empty")
+    @patch("delancert.server.action.save_telemetry_records")
+    @patch("delancert.server.action.fetch_telemetry_records_smart")
+    def test_sync_endpoint_creates_sync_job_run(
+        self,
+        mock_fetch_smart,
+        mock_save_records,
+        mock_is_database_empty,
+        mock_get_highest_record_id,
+    ):
+        mock_is_database_empty.return_value = False
+        mock_get_highest_record_id.side_effect = [10, 12]
+        mock_fetch_smart.return_value = [{"recordId": 11}]
+        mock_save_records.return_value = {"saved_records": 1, "skipped_records": 0, "errors": 0}
+
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+        url = reverse("telemetry-sync")
+        r = self.client.post(url, data={"limit": 1}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json().get("success"))
+        self.assertEqual(
+            TelemetryJobRun.objects.filter(job_type=TelemetryJobRun.JobType.SYNC).count(),
+            1,
+        )
+
+    @patch("delancert.server.action.merge_ott_records")
+    def test_merge_endpoint_creates_merge_job_run(self, mock_merge):
+        mock_merge.return_value = {"saved_records": 2, "deleted_existing": 0}
+
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+        url = reverse("telemetry-merge-ott")
+        r = self.client.post(url, data={"batch_size": 10, "backfill_last_n": 0}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json().get("success"))
+        self.assertEqual(
+            TelemetryJobRun.objects.filter(job_type=TelemetryJobRun.JobType.MERGE_OTT).count(),
+            1,
+        )
 
     @patch("delancert.server.action.merge_ott_records")
     @patch("delancert.server.action.save_telemetry_records")
@@ -166,3 +207,15 @@ class TelemetriaUtilsTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("alerts", resp.data)
         self.assertIn("signals", resp.data)
+
+    def test_telemetry_ops_check_exit_codes(self):
+        # OK -> exit 0
+        with self.assertRaises(SystemExit) as e:
+            call_command("telemetry_ops_check")
+        self.assertIn(int(e.exception.code), (0, 1, 2))
+
+    def test_telemetry_integrity_check_creates_job_run(self):
+        before = TelemetryJobRun.objects.filter(job_type=TelemetryJobRun.JobType.INTEGRITY_CHECK).count()
+        call_command("telemetry_integrity_check", hours=1)
+        after = TelemetryJobRun.objects.filter(job_type=TelemetryJobRun.JobType.INTEGRITY_CHECK).count()
+        self.assertEqual(after, before + 1)
