@@ -9,6 +9,7 @@ from django.core.management import call_command
 from rest_framework.test import APITestCase
 
 from delancert.analytics.common import parse_date_range
+from delancert.analytics.common import DateRange
 from delancert.models import TelemetryJobRun
 from delancert.models import TelemetryChannelDailyAgg, TelemetryUserDailyAgg, MergedTelemetricOTTDelancer
 from delancert.utils.rate_limit import acquire_rate_limit
@@ -268,3 +269,38 @@ class TelemetriaUtilsTests(APITestCase):
         self.assertEqual(ch1.views, 2)
         self.assertEqual(ch1.unique_users, 1)
         self.assertEqual(ch1.total_duration_seconds, 180)
+
+    def test_top_channels_uses_daily_aggs(self):
+        from django.utils import timezone as dj_tz
+        from delancert.analytics.channels import top_channels
+
+        d = dj_tz.localdate()
+        TelemetryChannelDailyAgg.objects.create(day=d, channel="ch1", views=10, unique_users=5, total_duration_seconds=600)
+        TelemetryChannelDailyAgg.objects.create(day=d, channel="ch2", views=5, unique_users=3, total_duration_seconds=300)
+
+        out = top_channels(DateRange(start=d, end=d), limit=10)
+        self.assertEqual(out[0]["channel"], "ch1")
+        self.assertEqual(out[0]["total_views"], 10)
+
+    def test_temporal_daily_uses_daily_aggs(self):
+        from django.utils import timezone as dj_tz
+        from delancert.analytics.temporal import temporal
+
+        d = dj_tz.localdate()
+        TelemetryChannelDailyAgg.objects.create(day=d, channel="ch1", views=2, unique_users=1, total_duration_seconds=3600)
+        out = temporal(DateRange(start=d, end=d), period="daily")
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["views"], 2)
+        self.assertEqual(out[0]["watch_hours"], 1.0)
+
+    def test_overview_uses_daily_aggs_for_totals(self):
+        from django.utils import timezone as dj_tz
+        from delancert.analytics.overview import overview
+        from delancert.models import TelemetryChannelDailyAgg
+
+        d = dj_tz.localdate()
+        TelemetryChannelDailyAgg.objects.create(day=d, channel="ch1", views=10, unique_users=2, total_duration_seconds=7200)
+
+        out = overview(DateRange(start=d, end=d))
+        self.assertEqual(out["kpis"]["total_views"], 10)
+        self.assertEqual(out["kpis"]["total_watch_hours"], 2.0)

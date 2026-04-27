@@ -236,6 +236,12 @@ Ejemplo creando tarea diaria de integrity check (03:00):
 ```powershell
 schtasks /Create /TN "Telemetria-Integrity-Check" /SC DAILY /ST 03:00 /F /TR "PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\Users\Leonard\Desktop\Telemetria\backend\scripts\run_integrity_check.ps1\" -BackendDir \"C:\Users\Leonard\Desktop\Telemetria\backend\" -Hours 24"
 ```
+
+Ejemplo creando tarea diaria para construir agregados (02:40):
+
+```powershell
+schtasks /Create /TN "Telemetria-Build-Aggregates" /SC DAILY /ST 02:40 /F /TR "PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\Users\Leonard\Desktop\Telemetria\backend\scripts\run_build_aggregates.ps1\" -BackendDir \"C:\Users\Leonard\Desktop\Telemetria\backend\" -Days 7"
+```
 - **Runs (auditoría)**: `GET /delancert/jobs/runs/?limit=20`
   - lista ejecuciones recientes (solo lectura).
 - **Alertas operativas (solo lectura)**: `GET /delancert/ops/alerts/`
