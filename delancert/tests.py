@@ -88,6 +88,16 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
             self.assertTrue(r.json().get("accepted"))
             self.assertEqual(r.json().get("task_id"), "task-123")
 
+    @patch("delancert.tasks.pipeline_run_task")
+    def test_pipeline_run_accepts_and_returns_task_id(self, mock_task):
+        mock_task.delay.return_value.id = "task-pipe-1"
+        with override_settings(CELERY_BROKER_URL="redis://localhost:6379/0"):
+            url = reverse("telemetry-ops-pipeline-run")
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            r = self.client.post(url, data={"limit": 10}, format="json")
+            self.assertEqual(r.status_code, 202)
+            self.assertEqual(r.json().get("task_id"), "task-pipe-1")
+
     @patch("delancert.tasks.ml_build_dataset_task")
     def test_enqueue_ml_build_dataset_accepts(self, mock_task):
         mock_task.delay.return_value.id = "task-ml-1"
@@ -136,6 +146,16 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
     def test_ops_analyst_report_requires_api_key(self):
         url = reverse("telemetry-ops-analyst-report")
         r = self.client.get(url)
+        self.assertEqual(r.status_code, 401)
+
+    def test_pipeline_run_requires_api_key(self):
+        url = reverse("telemetry-ops-pipeline-run")
+        r = self.client.post(url, data={}, format="json")
+        self.assertEqual(r.status_code, 401)
+
+    def test_ml_model_admin_requires_rw_key(self):
+        url = reverse("ml-model-activate")
+        r = self.client.post(url, data={"task": "watch_time_7d", "model_dir": "x"}, format="json")
         self.assertEqual(r.status_code, 401)
 
     @patch("delancert.server.action.get_highest_record_id")
@@ -452,6 +472,64 @@ class TelemetriaUtilsTests(APITestCase):
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.json().get("success"))
         self.assertEqual(r.json().get("task"), "watch_time_7d")
+
+    def test_ml_model_activate_and_rollback(self):
+        os.environ["TELEMETRIA_API_KEY_RW"] = "rw-key"
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+
+        m1 = TelemetryModelArtifact.objects.create(
+            task="watch_time_7d",
+            model_dir="artifacts/ml/models/watch_time_7d/m1",
+            feature_names=["x_views"],
+            metrics={"mae": 2.0},
+            active=True,
+        )
+        m2 = TelemetryModelArtifact.objects.create(
+            task="watch_time_7d",
+            model_dir="artifacts/ml/models/watch_time_7d/m2",
+            feature_names=["x_views"],
+            metrics={"mae": 1.0},
+            active=False,
+        )
+
+        # activate m2
+        url = reverse("ml-model-activate")
+        r = self.client.post(url, data={"task": "watch_time_7d", "model_dir": m2.model_dir}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(TelemetryModelArtifact.objects.get(id=m2.id).active)
+        self.assertFalse(TelemetryModelArtifact.objects.get(id=m1.id).active)
+
+        # rollback => vuelve a m1 (previo por created_at)
+        url2 = reverse("ml-model-rollback")
+        r2 = self.client.post(url2, data={"task": "watch_time_7d"}, format="json")
+        self.assertEqual(r2.status_code, 200)
+        # m1 vuelve activo
+        self.assertTrue(TelemetryModelArtifact.objects.get(id=m1.id).active)
+
+    def test_ml_models_list_endpoint(self):
+        os.environ["TELEMETRIA_API_KEY_RO"] = "ro-key"
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="ro-key")
+
+        TelemetryModelArtifact.objects.create(
+            task="watch_time_7d",
+            model_dir="artifacts/ml/models/watch_time_7d/a",
+            feature_names=["x_views"],
+            metrics={"mae": 2.0},
+            active=False,
+        )
+        TelemetryModelArtifact.objects.create(
+            task="watch_time_7d",
+            model_dir="artifacts/ml/models/watch_time_7d/b",
+            feature_names=["x_views"],
+            metrics={"mae": 1.0},
+            active=True,
+        )
+
+        url = reverse("ml-models-list")
+        r = self.client.get(url, data={"task": "watch_time_7d", "limit": 10})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json().get("success"))
+        self.assertGreaterEqual(len(r.json().get("models") or []), 2)
 
     def test_top_channels_uses_daily_aggs(self):
         from django.utils import timezone as dj_tz

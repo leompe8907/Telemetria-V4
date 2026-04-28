@@ -36,3 +36,33 @@ class LatestModelView(APIView):
             status=status.HTTP_200_OK,
         )
 
+
+class ModelListView(APIView):
+    """
+    Lista modelos del registry (histórico).
+
+    GET /delancert/ml/models/?task=watch_time_7d&limit=50
+    """
+
+    permission_classes = [HasTelemetryReadApiKey]
+    authentication_classes = [TelemetryApiKeyAuthentication]
+
+    def get(self, request):
+        task = (request.query_params.get("task") or "watch_time_7d").strip()
+        limit = int(request.query_params.get("limit", 50))
+        limit = max(1, min(limit, 200))
+
+        qs = TelemetryModelArtifact.objects.filter(task=task).order_by("-created_at", "-id")[:limit]
+        data = [
+            {
+                "task": r.task,
+                "model_dir": r.model_dir,
+                "active": bool(r.active),
+                "feature_names": r.feature_names,
+                "metrics": r.metrics,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in qs
+        ]
+        return Response({"success": True, "task": task, "models": data}, status=status.HTTP_200_OK)
+

@@ -40,6 +40,7 @@ Marcado para llevar trazabilidad de lo que ya quedó implementado en el repo.
   - [x] `/delancert/tasks/status/<task_id>/`
 - [x] **Endpoint híbrido** `POST /delancert/telemetry/run/` con `async=true` (encola Celery si está habilitado)
 - [x] **Endpoint híbrido** `POST /delancert/telemetry/build-aggregates/` con `async=true` (encola Celery si está habilitado)
+- [x] **Pipeline end-to-end (async)**: `/delancert/ops/pipeline/run/` (telemetry_run → build_aggregates → ml_predict)
 
 ### Sprint 3 — ML v1 productizable (parcial)
 - [x] **ML baseline por comandos** (`ml_build_dataset`, `ml_train`)
@@ -59,6 +60,10 @@ Marcado para llevar trazabilidad de lo que ya quedó implementado en el repo.
 - [x] **Señales ML + drift mínimo** en `/delancert/ops/summary/` (promedios 7d vs 7d previos + umbrales por env)
 - [x] **Alertas ML unificadas** en `/delancert/ops/alerts/` (drift + cobertura de predicciones)
 - [x] **Model Registry mínimo** (`TelemetryModelArtifact`) + endpoint RO `/delancert/ml/models/latest/`
+- [x] **Gobernanza de modelo activo (RW)**: activar/rollback
+  - [x] `POST /delancert/ml/models/activate/`
+  - [x] `POST /delancert/ml/models/rollback/`
+- [x] **Listado RO de modelos (registry)**: `GET /delancert/ml/models/`
 
 ## Estado actual (evidencia del repositorio)
 

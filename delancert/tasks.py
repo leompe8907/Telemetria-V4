@@ -507,16 +507,25 @@ def ml_train_task(
         feature_names, X, y = _read_dataset_csv(dataset_path)
         result = _fit_and_eval(feature_names, X, y, out_path)
 
-        # Registrar modelo entrenado (registry mínimo)
+        # Registrar modelo entrenado (registry mínimo) y dejar 1 activo por task
+        from django.db import transaction
         from delancert.models import TelemetryModelArtifact
 
-        TelemetryModelArtifact.objects.create(
-            task="watch_time_7d",
-            model_dir=result.model_dir.as_posix(),
-            feature_names=result.feature_names,
-            metrics={"mae": result.mae, "rmse": result.rmse, "n_rows": result.n_rows, "n_train": result.n_train, "n_test": result.n_test},
-            active=True,
-        )
+        with transaction.atomic():
+            TelemetryModelArtifact.objects.filter(task="watch_time_7d", active=True).update(active=False)
+            TelemetryModelArtifact.objects.create(
+                task="watch_time_7d",
+                model_dir=result.model_dir.as_posix(),
+                feature_names=result.feature_names,
+                metrics={
+                    "mae": result.mae,
+                    "rmse": result.rmse,
+                    "n_rows": result.n_rows,
+                    "n_train": result.n_train,
+                    "n_test": result.n_test,
+                },
+                active=True,
+            )
 
         finished_at = timezone.now()
         job.finished_at = finished_at
@@ -676,6 +685,83 @@ def ml_predict_task(
         job.save(update_fields=["finished_at", "duration_ms", "saved", "status"])
 
         return {"as_of": as_of_day.isoformat(), "rows": len(users), "model_dir": resolved_model_dir.as_posix()}
+    except Exception as e:
+        finished_at = timezone.now()
+        job.finished_at = finished_at
+        job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+        job.status = TelemetryJobRun.JobStatus.ERROR
+        job.error_message = str(e)[:2000]
+        job.save(update_fields=["finished_at", "duration_ms", "status", "error_message"])
+        raise
+    finally:
+        _release_task_lock(lock)
+
+
+@shared_task(bind=True, name="telemetria.pipeline_run")
+def pipeline_run_task(
+    self,
+    *,
+    limit: int = 1000,
+    batch_size: int = 1000,
+    process_timestamps: bool = True,
+    merge_batch_size: int = 500,
+    backfill_last_n: int = 0,
+    aggregates_days: int = 7,
+    predict_lookback_days: int = 7,
+    predict_horizon_days: int = 7,
+    lock_ttl_seconds: int = 7200,
+):
+    """
+    Pipeline encadenado (operación end-to-end):
+    1) telemetry_run (sync + merge)
+    2) build_aggregates (gold)
+    3) ml_predict (batch scoring)
+    """
+
+    from django.utils import timezone
+    from delancert.models import TelemetryJobRun
+
+    lock = _acquire_task_lock("pipeline_run", ttl_seconds=lock_ttl_seconds)
+    if not lock.acquired:
+        return {"skipped": True, "reason": "locked"}
+
+    job = TelemetryJobRun.objects.create(
+        job_type=TelemetryJobRun.JobType.PIPELINE,
+        status=TelemetryJobRun.JobStatus.SUCCESS,
+        started_at=timezone.now(),
+    )
+    try:
+        step_results = {}
+
+        # Step 1
+        step_results["telemetry_run"] = telemetry_run_task(
+            None,
+            limit=limit,
+            batch_size=batch_size,
+            process_timestamps=process_timestamps,
+            merge_batch_size=merge_batch_size,
+            backfill_last_n=backfill_last_n,
+        )
+
+        # Step 2
+        step_results["build_aggregates"] = telemetry_build_aggregates_task(None, days=int(aggregates_days))
+
+        # Step 3
+        step_results["ml_predict"] = ml_predict_task(
+            None,
+            as_of=None,
+            lookback_days=int(predict_lookback_days),
+            horizon_days=int(predict_horizon_days),
+            model_dir=None,
+        )
+
+        finished_at = timezone.now()
+        job.finished_at = finished_at
+        job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+        job.status = TelemetryJobRun.JobStatus.SUCCESS
+        job.save(update_fields=["finished_at", "duration_ms", "status"])
+
+        return {"pipeline": "ok", "steps": step_results}
     except Exception as e:
         finished_at = timezone.now()
         job.finished_at = finished_at

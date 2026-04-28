@@ -6,6 +6,7 @@ from delancert.server.jobs import TelemetryJobRunsView
 from delancert.server.ops import TelemetryOpsAlertsView, TelemetryOpsSummaryView
 from delancert.server.noc import NocRecommendationsView
 from delancert.server.analyst import OpsAnalystReportView
+from delancert.server.pipeline import PipelineRunView
 from delancert.server.tasks_api import (
     TelemetryRunEnqueueView,
     TelemetryBuildAggregatesEnqueueView,
@@ -15,7 +16,8 @@ from delancert.server.tasks_api import (
     CeleryTaskStatusView,
 )
 from delancert.server.ml_predictions import UserPredictionsView, DailyPredictionsSummaryView
-from delancert.server.ml_models import LatestModelView
+from delancert.server.ml_models import LatestModelView, ModelListView
+from delancert.server.ml_model_admin import ActivateModelView, RollbackModelView
 from delancert.server.dashboard import (
     DashboardOverviewView,
     DashboardTopChannelsView,
@@ -45,10 +47,14 @@ urlpatterns = [
     path("ops/summary/", TelemetryOpsSummaryView.as_view(), name="telemetry-ops-summary"),
     path("ops/noc/recommendations/", NocRecommendationsView.as_view(), name="telemetry-ops-noc-recommendations"),
     path("ops/analyst/report/", OpsAnalystReportView.as_view(), name="telemetry-ops-analyst-report"),
+    path("ops/pipeline/run/", PipelineRunView.as_view(), name="telemetry-ops-pipeline-run"),
     # ML predictions (read-only)
     path("ml/predictions/users/<str:subscriber_code>/", UserPredictionsView.as_view(), name="ml-user-predictions"),
     path("ml/predictions/daily/", DailyPredictionsSummaryView.as_view(), name="ml-daily-predictions"),
     path("ml/models/latest/", LatestModelView.as_view(), name="ml-latest-model"),
+    path("ml/models/", ModelListView.as_view(), name="ml-models-list"),
+    path("ml/models/activate/", ActivateModelView.as_view(), name="ml-model-activate"),
+    path("ml/models/rollback/", RollbackModelView.as_view(), name="ml-model-rollback"),
     # Dashboard API
     path("dashboard/overview/", DashboardOverviewView.as_view(), name="dashboard-overview"),
     path("dashboard/channels/top/", DashboardTopChannelsView.as_view(), name="dashboard-top-channels"),

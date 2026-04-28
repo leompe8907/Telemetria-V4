@@ -183,6 +183,7 @@ class TelemetryJobRun(models.Model):
         ML_BUILD_DATASET = "ml_build_dataset", "ml_build_dataset"
         ML_TRAIN = "ml_train", "ml_train"
         ML_PREDICT = "ml_predict", "ml_predict"
+        PIPELINE = "pipeline", "pipeline"
 
     class JobStatus(models.TextChoices):
         SUCCESS = "success", "success"
