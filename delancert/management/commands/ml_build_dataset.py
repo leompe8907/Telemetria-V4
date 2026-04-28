@@ -9,7 +9,7 @@ from django.core.management.base import BaseCommand
 from django.db.models import Sum
 from django.utils import timezone
 
-from delancert.models import MergedTelemetricOTTDelancer, TelemetryUserDailyAgg
+from delancert.models import MergedTelemetricOTTDelancer, TelemetryUserDailyAgg, TelemetryJobRun
 
 
 @dataclass(frozen=True)
@@ -61,6 +61,12 @@ class Command(BaseCommand):
         horizon_days = int(options["horizon_days"])
         out_path = Path(str(options["output"]))
         min_history_days = max(1, int(options["min_history_days"]))
+
+        job = TelemetryJobRun.objects.create(
+            job_type=TelemetryJobRun.JobType.ML_BUILD_DATASET,
+            status=TelemetryJobRun.JobStatus.SUCCESS,
+            started_at=timezone.now(),
+        )
 
         as_of = _parse_date(as_of_str) if as_of_str else timezone.localdate()
 
@@ -141,6 +147,13 @@ class Command(BaseCommand):
                 }
                 w.writerow(row)
                 n += 1
+
+        finished_at = timezone.now()
+        job.finished_at = finished_at
+        job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
+        job.saved = n
+        job.status = TelemetryJobRun.JobStatus.SUCCESS
+        job.save(update_fields=["finished_at", "duration_ms", "saved", "status"])
 
         self.stdout.write(
             self.style.SUCCESS(

@@ -179,6 +179,8 @@ class TelemetryJobRun(models.Model):
         SYNC = "sync", "sync"
         MERGE_OTT = "merge_ott", "merge_ott"
         INTEGRITY_CHECK = "integrity_check", "integrity_check"
+        ML_BUILD_DATASET = "ml_build_dataset", "ml_build_dataset"
+        ML_TRAIN = "ml_train", "ml_train"
 
     class JobStatus(models.TextChoices):
         SUCCESS = "success", "success"

@@ -352,3 +352,71 @@ class TelemetriaUtilsTests(APITestCase):
         self.assertIn("u2", by_u)
         self.assertEqual(int(by_u["u1"]["y_watch_seconds_next_horizon"]), 300)
         self.assertEqual(int(by_u["u2"]["y_watch_seconds_next_horizon"]), 0)
+
+    def test_ml_train_creates_model_artifacts(self):
+        from pathlib import Path
+        import csv
+        from django.core.management import call_command
+
+        ds = Path("artifacts/ml/datasets/test_train.csv")
+        ds.parent.mkdir(parents=True, exist_ok=True)
+        with ds.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "as_of",
+                    "subscriber_code",
+                    "feature_start",
+                    "feature_end",
+                    "target_start",
+                    "target_end",
+                    "x_views",
+                    "x_unique_channels_sum",
+                    "x_watch_seconds",
+                    "x_active_days",
+                    "y_watch_seconds_next_horizon",
+                ],
+            )
+            w.writeheader()
+            w.writerow(
+                {
+                    "as_of": "2026-01-01",
+                    "subscriber_code": "u1",
+                    "feature_start": "2025-12-26",
+                    "feature_end": "2026-01-01",
+                    "target_start": "2026-01-02",
+                    "target_end": "2026-01-08",
+                    "x_views": 10,
+                    "x_unique_channels_sum": 3,
+                    "x_watch_seconds": 1000,
+                    "x_active_days": 3,
+                    "y_watch_seconds_next_horizon": 1200,
+                }
+            )
+            w.writerow(
+                {
+                    "as_of": "2026-01-01",
+                    "subscriber_code": "u2",
+                    "feature_start": "2025-12-26",
+                    "feature_end": "2026-01-01",
+                    "target_start": "2026-01-02",
+                    "target_end": "2026-01-08",
+                    "x_views": 2,
+                    "x_unique_channels_sum": 1,
+                    "x_watch_seconds": 200,
+                    "x_active_days": 1,
+                    "y_watch_seconds_next_horizon": 50,
+                }
+            )
+
+        out_dir = Path("artifacts/ml/models/test_model")
+        if out_dir.exists():
+            # limpiar outputs previos
+            for p in out_dir.glob("*"):
+                p.unlink()
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        call_command("ml_train", dataset=str(ds), out_dir=str(out_dir))
+        self.assertTrue((out_dir / "model.joblib").exists())
+        self.assertTrue((out_dir / "metrics.json").exists())
+        self.assertTrue((out_dir / "feature_names.json").exists())
