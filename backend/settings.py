@@ -176,6 +176,47 @@ else:
         }
     }
 
+# =============================================================================
+# Celery (Redis recomendado)
+# =============================================================================
+#
+# Filosofía: Celery es opcional. Si REDIS_URL no está configurado, no “rompemos”
+# el backend: solo quedará deshabilitado el worker/beat en runtime.
+#
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL).strip() or None
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL).strip() or None
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "1800"))  # 30 min
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "1500"))  # 25 min
+
+# Beat (schedule) opcional: se activa explícitamente por env.
+# Importante: si CELERY_BROKER_URL es None, no tiene sentido habilitar beat.
+CELERY_ENABLE_BEAT = (os.getenv("CELERY_ENABLE_BEAT", "0") or "0").strip().lower() in ("1", "true", "yes")
+if CELERY_ENABLE_BEAT:
+    CELERY_BEAT_SCHEDULE = {
+        "telemetry-run-every-10m": {
+            "task": "telemetria.telemetry_run",
+            "schedule": int(os.getenv("CELERY_SCHEDULE_TELEMETRY_RUN_SECONDS", "600")),
+            "kwargs": {
+                "limit": int(os.getenv("TELEMETRY_RUN_LIMIT", "1000")),
+                "batch_size": int(os.getenv("TELEMETRY_RUN_BATCH_SIZE", "1000")),
+                "process_timestamps": (os.getenv("TELEMETRY_RUN_PROCESS_TIMESTAMPS", "1") or "1").strip().lower()
+                in ("1", "true", "yes"),
+                "merge_batch_size": int(os.getenv("TELEMETRY_RUN_MERGE_BATCH_SIZE", "500")),
+                "backfill_last_n": int(os.getenv("TELEMETRY_RUN_BACKFILL_LAST_N", "0")),
+            },
+        },
+        "build-aggregates-daily": {
+            "task": "telemetria.build_aggregates",
+            "schedule": int(os.getenv("CELERY_SCHEDULE_BUILD_AGG_SECONDS", "86400")),
+            "kwargs": {"days": int(os.getenv("TELEMETRY_AGG_DAYS", "7"))},
+        },
+    }
+
 # ============================================================================
 # CONFIGURACIÓN DE LOGGING
 # ============================================================================
