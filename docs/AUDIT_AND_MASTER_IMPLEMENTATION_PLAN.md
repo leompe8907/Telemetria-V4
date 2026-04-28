@@ -56,6 +56,8 @@ Marcado para llevar trazabilidad de lo que ya quedó implementado en el repo.
 - [x] **Endpoints RO para consultar predicciones**
   - [x] `/delancert/ml/predictions/users/<subscriber_code>/`
   - [x] `/delancert/ml/predictions/daily/`
+- [x] **Señales ML + drift mínimo** en `/delancert/ops/summary/` (promedios 7d vs 7d previos + umbrales por env)
+- [x] **Alertas ML unificadas** en `/delancert/ops/alerts/` (drift + cobertura de predicciones)
 
 ## Estado actual (evidencia del repositorio)
 
@@ -234,6 +236,10 @@ Framework sugerido:
 - Agente Analista para narrativas del dashboard (solo agregados).
 - Guardrails:
   - allowlist de tools, límites de costo, auditoría, no PII.
+
+#### Estado de implementación
+- [x] **Agente NOC v0 (determinístico, sin LLM)**: `/delancert/ops/noc/recommendations/` (consume `ops/alerts` + `ops/summary` y devuelve playbooks accionables)
+- [x] **Agente Analista v0 (determinístico + LLM opcional)**: `/delancert/ops/analyst/report/?use_llm=1` (solo agregados; LLM por env; fallback determinístico)
 
 ### Sprint 5 — DevOps/Operación HA (1 semana)
 - CI/CD (tests, lint, migraciones).

@@ -5,11 +5,18 @@ from datetime import timedelta
 
 from django.db.models import Max
 from django.utils import timezone
+from django.db.models import Avg, Sum
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from delancert.models import TelemetryJobRun, TelemetryRecordEntryDelancer, MergedTelemetricOTTDelancer
+from delancert.models import (
+    TelemetryJobRun,
+    TelemetryRecordEntryDelancer,
+    MergedTelemetricOTTDelancer,
+    TelemetryUserDailyAgg,
+    TelemetryUserDailyPrediction,
+)
 from delancert.utils.api_key_authentication import TelemetryApiKeyAuthentication
 from delancert.utils.api_key_permission import HasTelemetryReadApiKey
 
@@ -39,6 +46,10 @@ class TelemetryOpsAlertsView(APIView):
         no_new_minutes_warn = _int_env("TELEMETRIA_ALERT_NO_NEW_MIN_WARN", 30)
         no_new_minutes_crit = _int_env("TELEMETRIA_ALERT_NO_NEW_MIN_CRIT", 60)
         consecutive_fail_crit = _int_env("TELEMETRIA_ALERT_CONSEC_FAIL_CRIT", 3)
+        ml_drift_warn_pct = _int_env("TELEMETRIA_ML_DRIFT_WARN_PCT", 30)
+        ml_drift_crit_pct = _int_env("TELEMETRIA_ML_DRIFT_CRIT_PCT", 60)
+        ml_pred_coverage_warn_pct = _int_env("TELEMETRIA_ML_PRED_COVERAGE_WARN_PCT", 80)
+        ml_pred_coverage_crit_pct = _int_env("TELEMETRIA_ML_PRED_COVERAGE_CRIT_PCT", 50)
 
         raw_max = TelemetryRecordEntryDelancer.objects.aggregate(max_record_id=Max("recordId"))["max_record_id"] or 0
         merged_max = MergedTelemetricOTTDelancer.objects.aggregate(max_record_id=Max("recordId"))["max_record_id"] or 0
@@ -118,6 +129,84 @@ class TelemetryOpsAlertsView(APIView):
                 }
             )
 
+        # =============================================================================
+        # Alertas ML (drift + cobertura)
+        # =============================================================================
+        as_of_day = timezone.localdate()
+        pred_count = TelemetryUserDailyPrediction.objects.filter(day=as_of_day, horizon_days=7).count()
+        active_users_today = (
+            TelemetryUserDailyAgg.objects.filter(day=as_of_day).values("subscriber_code").distinct().count()
+        )
+        coverage_pct = None
+        if active_users_today > 0:
+            coverage_pct = int(round(pred_count / active_users_today * 100.0))
+
+        if coverage_pct is not None:
+            if coverage_pct <= ml_pred_coverage_crit_pct:
+                alerts.append(
+                    {
+                        "code": "ML_PRED_COVERAGE_CRIT",
+                        "severity": "critical",
+                        "message": f"Cobertura de predicciones baja: {coverage_pct}% (pred={pred_count}, active={active_users_today}).",
+                    }
+                )
+            elif coverage_pct <= ml_pred_coverage_warn_pct:
+                alerts.append(
+                    {
+                        "code": "ML_PRED_COVERAGE_WARN",
+                        "severity": "warning",
+                        "message": f"Cobertura de predicciones baja: {coverage_pct}% (pred={pred_count}, active={active_users_today}).",
+                    }
+                )
+
+        def _avg_features(start_day, end_day):
+            r = (
+                TelemetryUserDailyAgg.objects.filter(day__gte=start_day, day__lte=end_day)
+                .aggregate(
+                    avg_views=Avg("views"),
+                    avg_unique_channels=Avg("unique_channels"),
+                    avg_watch_seconds=Avg("total_duration_seconds"),
+                )
+            )
+            return {
+                "avg_views": float(r["avg_views"] or 0.0),
+                "avg_unique_channels": float(r["avg_unique_channels"] or 0.0),
+                "avg_watch_seconds": float(r["avg_watch_seconds"] or 0.0),
+            }
+
+        last7_start = as_of_day - timedelta(days=6)
+        prev7_start = as_of_day - timedelta(days=13)
+        prev7_end = as_of_day - timedelta(days=7)
+        cur = _avg_features(last7_start, as_of_day)
+        prev = _avg_features(prev7_start, prev7_end)
+
+        def _pct_change(cur_v: float, prev_v: float) -> float | None:
+            if prev_v == 0:
+                return None if cur_v == 0 else 999.0
+            return (cur_v - prev_v) / abs(prev_v) * 100.0
+
+        for k in ("avg_views", "avg_unique_channels", "avg_watch_seconds"):
+            pct = _pct_change(cur[k], prev[k])
+            if pct is None:
+                continue
+            apct = abs(float(pct))
+            if apct >= float(ml_drift_crit_pct):
+                alerts.append(
+                    {
+                        "code": "ML_DRIFT_CRIT",
+                        "severity": "critical",
+                        "message": f"Drift crítico en {k}: {round(pct, 2)}% (7d vs prev7d).",
+                    }
+                )
+            elif apct >= float(ml_drift_warn_pct):
+                alerts.append(
+                    {
+                        "code": "ML_DRIFT_WARN",
+                        "severity": "warning",
+                        "message": f"Drift alto en {k}: {round(pct, 2)}% (7d vs prev7d).",
+                    }
+                )
+
         payload = {
             "time": now.isoformat(),
             "thresholds": {
@@ -126,6 +215,10 @@ class TelemetryOpsAlertsView(APIView):
                 "no_new_minutes_warn": no_new_minutes_warn,
                 "no_new_minutes_crit": no_new_minutes_crit,
                 "consecutive_fail_crit": consecutive_fail_crit,
+                "ml_drift_warn_pct": ml_drift_warn_pct,
+                "ml_drift_crit_pct": ml_drift_crit_pct,
+                "ml_pred_coverage_warn_pct": ml_pred_coverage_warn_pct,
+                "ml_pred_coverage_crit_pct": ml_pred_coverage_crit_pct,
             },
             "signals": {
                 "raw_max_record_id": raw_max,
@@ -135,6 +228,9 @@ class TelemetryOpsAlertsView(APIView):
                 "minutes_since_new_raw": mins_since_new,
                 "clock_skew_detected": clock_skew,
                 "consecutive_run_failures": consec_fail,
+                "ml_predictions_today": pred_count,
+                "ml_active_users_today": active_users_today,
+                "ml_pred_coverage_pct": coverage_pct,
             },
             "alerts": alerts,
             "ok": len(alerts) == 0,
@@ -142,6 +238,7 @@ class TelemetryOpsAlertsView(APIView):
                 "Este endpoint NO llama a PanAccess; solo evalúa señales locales (BD + auditoría).",
                 "Si alerts no está vacío, revisar logs y /delancert/jobs/runs/.",
                 "Si clock_skew_detected=true, revisar zona horaria/parseo de timestamp (puede haber timestamps futuros).",
+                "Alertas ML son heurísticas: validar con contexto (campañas, estacionalidad, fallas de scoring).",
             ],
         }
         return Response(payload, status=status.HTTP_200_OK)
@@ -174,6 +271,8 @@ class TelemetryOpsSummaryView(APIView):
             TelemetryJobRun.JobType.SYNC,
             TelemetryJobRun.JobType.MERGE_OTT,
             TelemetryJobRun.JobType.INTEGRITY_CHECK,
+            TelemetryJobRun.JobType.ML_TRAIN,
+            TelemetryJobRun.JobType.ML_PREDICT,
         ):
             r = TelemetryJobRun.objects.filter(job_type=jt).order_by("-started_at").first()
             if not r:
@@ -196,6 +295,58 @@ class TelemetryOpsSummaryView(APIView):
                     "error_message": r.error_message,
                 }
 
+        # =============================================================================
+        # Señales ML (mínimas) + drift simple en features agregadas
+        # =============================================================================
+        drift_warn_pct = _int_env("TELEMETRIA_ML_DRIFT_WARN_PCT", 30)  # 30%
+        drift_crit_pct = _int_env("TELEMETRIA_ML_DRIFT_CRIT_PCT", 60)  # 60%
+
+        as_of_day = timezone.localdate()
+        # Cobertura de predicciones del día
+        pred_count = TelemetryUserDailyPrediction.objects.filter(day=as_of_day, horizon_days=7).count()
+        active_users_today = TelemetryUserDailyAgg.objects.filter(day=as_of_day).values("subscriber_code").distinct().count()
+
+        def _avg_features(start_day, end_day):
+            r = (
+                TelemetryUserDailyAgg.objects.filter(day__gte=start_day, day__lte=end_day)
+                .aggregate(
+                    avg_views=Avg("views"),
+                    avg_unique_channels=Avg("unique_channels"),
+                    avg_watch_seconds=Avg("total_duration_seconds"),
+                )
+            )
+            return {
+                "avg_views": float(r["avg_views"] or 0.0),
+                "avg_unique_channels": float(r["avg_unique_channels"] or 0.0),
+                "avg_watch_seconds": float(r["avg_watch_seconds"] or 0.0),
+            }
+
+        # Comparación simple: últimos 7 días vs 7 días previos
+        last7_start = as_of_day - timedelta(days=6)
+        prev7_start = as_of_day - timedelta(days=13)
+        prev7_end = as_of_day - timedelta(days=7)
+
+        cur = _avg_features(last7_start, as_of_day)
+        prev = _avg_features(prev7_start, prev7_end)
+
+        def _pct_change(cur_v: float, prev_v: float) -> float | None:
+            if prev_v == 0:
+                return None if cur_v == 0 else 999.0
+            return (cur_v - prev_v) / abs(prev_v) * 100.0
+
+        drift = {}
+        drift_alerts = []
+        for k in ("avg_views", "avg_unique_channels", "avg_watch_seconds"):
+            pct = _pct_change(cur[k], prev[k])
+            drift[k] = {"current": cur[k], "previous": prev[k], "pct_change": pct}
+            if pct is None:
+                continue
+            apct = abs(float(pct))
+            if apct >= float(drift_crit_pct):
+                drift_alerts.append({"code": "ML_DRIFT_CRIT", "severity": "critical", "metric": k, "pct_change": pct})
+            elif apct >= float(drift_warn_pct):
+                drift_alerts.append({"code": "ML_DRIFT_WARN", "severity": "warning", "metric": k, "pct_change": pct})
+
         payload = {
             "time": now.isoformat(),
             "health": {
@@ -205,6 +356,17 @@ class TelemetryOpsSummaryView(APIView):
             },
             "alerts": alerts_payload,
             "last_runs": last_runs,
+            "ml": {
+                "as_of_day": as_of_day.isoformat(),
+                "predictions_today": {"count": pred_count, "active_users_today": active_users_today},
+                "feature_drift_7d_vs_prev7d": {
+                    "window_current": {"start": last7_start.isoformat(), "end": as_of_day.isoformat()},
+                    "window_previous": {"start": prev7_start.isoformat(), "end": prev7_end.isoformat()},
+                    "metrics": drift,
+                    "alerts": drift_alerts,
+                    "thresholds": {"warn_pct": drift_warn_pct, "crit_pct": drift_crit_pct},
+                },
+            },
         }
         return Response(payload, status=status.HTTP_200_OK)
 

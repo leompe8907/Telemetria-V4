@@ -4,6 +4,8 @@ from delancert.server.aggregates import TelemetryBuildAggregatesView
 from delancert.server.health import TelemetryHealthView
 from delancert.server.jobs import TelemetryJobRunsView
 from delancert.server.ops import TelemetryOpsAlertsView, TelemetryOpsSummaryView
+from delancert.server.noc import NocRecommendationsView
+from delancert.server.analyst import OpsAnalystReportView
 from delancert.server.tasks_api import (
     TelemetryRunEnqueueView,
     TelemetryBuildAggregatesEnqueueView,
@@ -40,6 +42,8 @@ urlpatterns = [
     path("jobs/runs/", TelemetryJobRunsView.as_view(), name="telemetry-job-runs"),
     path("ops/alerts/", TelemetryOpsAlertsView.as_view(), name="telemetry-ops-alerts"),
     path("ops/summary/", TelemetryOpsSummaryView.as_view(), name="telemetry-ops-summary"),
+    path("ops/noc/recommendations/", NocRecommendationsView.as_view(), name="telemetry-ops-noc-recommendations"),
+    path("ops/analyst/report/", OpsAnalystReportView.as_view(), name="telemetry-ops-analyst-report"),
     # ML predictions (read-only)
     path("ml/predictions/users/<str:subscriber_code>/", UserPredictionsView.as_view(), name="ml-user-predictions"),
     path("ml/predictions/daily/", DailyPredictionsSummaryView.as_view(), name="ml-daily-predictions"),

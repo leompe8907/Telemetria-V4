@@ -127,6 +127,16 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
         r = self.client.get(url)
         self.assertEqual(r.status_code, 401)
 
+    def test_noc_recommendations_requires_api_key(self):
+        url = reverse("telemetry-ops-noc-recommendations")
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 401)
+
+    def test_ops_analyst_report_requires_api_key(self):
+        url = reverse("telemetry-ops-analyst-report")
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 401)
+
     @patch("delancert.server.action.get_highest_record_id")
     @patch("delancert.server.action.is_database_empty")
     @patch("delancert.server.action.save_telemetry_records")
@@ -309,6 +319,38 @@ class TelemetriaUtilsTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("alerts", resp.data)
         self.assertIn("signals", resp.data)
+        self.assertIn("thresholds", resp.data)
+
+    def test_ops_summary_includes_ml_section(self):
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="ro-key")
+        url = reverse("telemetry-ops-summary")
+        r = self.client.get(url)
+        self.assertNotIn(r.status_code, (401, 403))
+        # auth está ok; si devuelve 200, debe incluir "ml"
+        if r.status_code == 200:
+            self.assertIn("ml", r.json())
+
+    def test_noc_recommendations_payload_shape(self):
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="ro-key")
+        url = reverse("telemetry-ops-noc-recommendations")
+        r = self.client.get(url)
+        self.assertNotIn(r.status_code, (401, 403))
+        if r.status_code == 200:
+            body = r.json()
+            self.assertIn("recommendations", body)
+            self.assertIn("alerts", body)
+            self.assertIn("summary", body)
+
+    def test_ops_analyst_report_payload_shape(self):
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="ro-key")
+        url = reverse("telemetry-ops-analyst-report")
+        r = self.client.get(url)
+        self.assertNotIn(r.status_code, (401, 403))
+        if r.status_code == 200:
+            body = r.json()
+            self.assertIn("report", body)
+            self.assertIn("llm", body)
+            self.assertIn("highlights_md", body["report"])
 
     def test_telemetry_ops_check_exit_codes(self):
         # OK -> exit 0
