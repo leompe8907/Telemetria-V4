@@ -15,6 +15,7 @@ from delancert.server.tasks_api import (
     CeleryTaskStatusView,
 )
 from delancert.server.ml_predictions import UserPredictionsView, DailyPredictionsSummaryView
+from delancert.server.ml_models import LatestModelView
 from delancert.server.dashboard import (
     DashboardOverviewView,
     DashboardTopChannelsView,
@@ -47,6 +48,7 @@ urlpatterns = [
     # ML predictions (read-only)
     path("ml/predictions/users/<str:subscriber_code>/", UserPredictionsView.as_view(), name="ml-user-predictions"),
     path("ml/predictions/daily/", DailyPredictionsSummaryView.as_view(), name="ml-daily-predictions"),
+    path("ml/models/latest/", LatestModelView.as_view(), name="ml-latest-model"),
     # Dashboard API
     path("dashboard/overview/", DashboardOverviewView.as_view(), name="dashboard-overview"),
     path("dashboard/channels/top/", DashboardTopChannelsView.as_view(), name="dashboard-top-channels"),

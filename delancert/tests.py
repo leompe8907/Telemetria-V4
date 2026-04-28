@@ -14,6 +14,7 @@ from delancert.analytics.common import DateRange
 from delancert.models import TelemetryJobRun
 from delancert.models import TelemetryChannelDailyAgg, TelemetryUserDailyAgg, MergedTelemetricOTTDelancer
 from delancert.models import TelemetryUserDailyPrediction
+from delancert.models import TelemetryModelArtifact
 from delancert.utils.rate_limit import acquire_rate_limit
 from delancert.exceptions import PanAccessAPIError
 
@@ -431,6 +432,26 @@ class TelemetriaUtilsTests(APITestCase):
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.json().get("success"))
         self.assertEqual(len(r.json().get("predictions") or []), 1)
+
+    def test_ml_latest_model_endpoint(self):
+        os.environ["TELEMETRIA_API_KEY_RO"] = "ro-key"
+        # Sin registro -> 404
+        url = reverse("ml-latest-model")
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="ro-key")
+        r0 = self.client.get(url)
+        self.assertEqual(r0.status_code, 404)
+
+        TelemetryModelArtifact.objects.create(
+            task="watch_time_7d",
+            model_dir="artifacts/ml/models/watch_time_7d/x",
+            feature_names=["x_views"],
+            metrics={"mae": 1.0},
+            active=True,
+        )
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json().get("success"))
+        self.assertEqual(r.json().get("task"), "watch_time_7d")
 
     def test_top_channels_uses_daily_aggs(self):
         from django.utils import timezone as dj_tz

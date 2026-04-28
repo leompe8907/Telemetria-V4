@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from django.core.serializers.json import DjangoJSONEncoder
 
 class TelemetryBase(models.Model):
     """Modelo base abstracto con todos los campos comunes"""
@@ -286,4 +287,25 @@ class TelemetryUserDailyPrediction(models.Model):
         indexes = [
             models.Index(fields=["day", "horizon_days"]),
             models.Index(fields=["subscriber_code", "day"]),
+        ]
+
+
+class TelemetryModelArtifact(models.Model):
+    """
+    Registry mínimo de modelos entrenados para operación.
+    Permite que scoring y ops consulten el “último modelo” sin depender de listar carpetas.
+    """
+
+    task = models.CharField(max_length=64, db_index=True)  # ej: "watch_time_7d"
+    model_dir = models.CharField(max_length=500, unique=True)
+    feature_names = models.JSONField(default=list, encoder=DjangoJSONEncoder)
+    metrics = models.JSONField(default=dict, encoder=DjangoJSONEncoder)
+    active = models.BooleanField(default=True, db_index=True)
+
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "telemetry_model_artifact"
+        indexes = [
+            models.Index(fields=["task", "active", "created_at"]),
         ]

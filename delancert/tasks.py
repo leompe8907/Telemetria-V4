@@ -417,6 +417,7 @@ def ml_train_task(
         n_test: int
         mae: float
         rmse: float
+        feature_names: list[str]
 
     def _read_dataset_csv(path: Path) -> Tuple[List[str], List[List[float]], List[float]]:
         import csv
@@ -480,7 +481,15 @@ def ml_train_task(
             encoding="utf-8",
         )
 
-        return TrainResult(model_dir=out_dir, n_rows=len(X), n_train=len(X_train), n_test=len(X_test), mae=mae, rmse=rmse)
+        return TrainResult(
+            model_dir=out_dir,
+            n_rows=len(X),
+            n_train=len(X_train),
+            n_test=len(X_test),
+            mae=mae,
+            rmse=rmse,
+            feature_names=feature_names,
+        )
 
     dataset_path = Path(str(dataset))
     if not dataset_path.exists():
@@ -497,6 +506,17 @@ def ml_train_task(
     try:
         feature_names, X, y = _read_dataset_csv(dataset_path)
         result = _fit_and_eval(feature_names, X, y, out_path)
+
+        # Registrar modelo entrenado (registry mínimo)
+        from delancert.models import TelemetryModelArtifact
+
+        TelemetryModelArtifact.objects.create(
+            task="watch_time_7d",
+            model_dir=result.model_dir.as_posix(),
+            feature_names=result.feature_names,
+            metrics={"mae": result.mae, "rmse": result.rmse, "n_rows": result.n_rows, "n_train": result.n_train, "n_test": result.n_test},
+            active=True,
+        )
 
         finished_at = timezone.now()
         job.finished_at = finished_at
@@ -549,7 +569,7 @@ def ml_predict_task(
     from django.db.models import Count, Sum
     from django.utils import timezone
 
-    from delancert.models import TelemetryJobRun, TelemetryUserDailyAgg, TelemetryUserDailyPrediction
+    from delancert.models import TelemetryJobRun, TelemetryUserDailyAgg, TelemetryUserDailyPrediction, TelemetryModelArtifact
 
     lock = _acquire_task_lock("ml_predict", ttl_seconds=lock_ttl_seconds)
     if not lock.acquired:
@@ -574,18 +594,26 @@ def ml_predict_task(
         horizon_days = max(1, int(horizon_days))
         start_day, end_day = _window(as_of_day, lookback_days)
 
-        # Resolver modelo (si no se indica)
+        # Resolver modelo (si no se indica) — preferir registry DB
         resolved_model_dir: Path
         if model_dir:
             resolved_model_dir = Path(str(model_dir))
         else:
-            root = Path("artifacts/ml/models/watch_time_7d")
-            if not root.exists():
-                raise SystemExit("No se encontró un modelo. Entrena uno o especifica model_dir.")
-            candidates = [p for p in root.iterdir() if p.is_dir()]
-            if not candidates:
-                raise SystemExit("No se encontró un modelo. Entrena uno o especifica model_dir.")
-            resolved_model_dir = sorted(candidates, key=lambda p: p.name)[-1]
+            latest = (
+                TelemetryModelArtifact.objects.filter(task="watch_time_7d", active=True)
+                .order_by("-created_at")
+                .first()
+            )
+            if latest:
+                resolved_model_dir = Path(latest.model_dir)
+            else:
+                root = Path("artifacts/ml/models/watch_time_7d")
+                if not root.exists():
+                    raise SystemExit("No se encontró un modelo. Entrena uno o especifica model_dir.")
+                candidates = [p for p in root.iterdir() if p.is_dir()]
+                if not candidates:
+                    raise SystemExit("No se encontró un modelo. Entrena uno o especifica model_dir.")
+                resolved_model_dir = sorted(candidates, key=lambda p: p.name)[-1]
 
         model_path = resolved_model_dir / "model.joblib"
         feature_names_path = resolved_model_dir / "feature_names.json"
