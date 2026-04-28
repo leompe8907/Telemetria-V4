@@ -23,6 +23,40 @@ Este documento consolida la **auditoría/diagnóstico** y el **plan maestro por 
 
 ---
 
+## Control de avance (ejecución vs roadmap)
+Marcado para llevar trazabilidad de lo que ya quedó implementado en el repo.
+
+### Sprint 1 — Orquestación moderna (Celery + Redis)
+- [x] **Celery integrado** (`backend/celery.py`, config en `backend/settings.py`)
+- [x] **Locks best-effort vía cache/Redis** para evitar solapamientos (`delancert/tasks.py`)
+- [x] **Tareas Celery operativas**
+  - [x] `telemetria.telemetry_run`
+  - [x] `telemetria.build_aggregates`
+- [x] **Beat schedule mínimo opcional** (activable por env: `CELERY_ENABLE_BEAT`)
+- [x] **Runbook de operación** (`docs/CELERY_RUNBOOK.md`)
+- [x] **API async para encolar jobs + estado por task_id**
+  - [x] `/delancert/tasks/telemetry/run/`
+  - [x] `/delancert/tasks/telemetry/build-aggregates/`
+  - [x] `/delancert/tasks/status/<task_id>/`
+- [x] **Endpoint híbrido** `POST /delancert/telemetry/run/` con `async=true` (encola Celery si está habilitado)
+- [x] **Endpoint híbrido** `POST /delancert/telemetry/build-aggregates/` con `async=true` (encola Celery si está habilitado)
+
+### Sprint 3 — ML v1 productizable (parcial)
+- [x] **ML baseline por comandos** (`ml_build_dataset`, `ml_train`)
+- [x] **Tareas Celery ML**
+  - [x] `telemetria.ml_build_dataset`
+  - [x] `telemetria.ml_train`
+- [x] **API async para ML**
+  - [x] `/delancert/tasks/ml/build-dataset/`
+  - [x] `/delancert/tasks/ml/train/`
+- [x] `/delancert/tasks/ml/predict/` (batch scoring)
+- [x] **Tests sin ensuciar artifacts** (datasets/modelos en directorios temporales durante tests)
+- [ ] **Split temporal real + drift** (pendiente)
+- [x] **Batch scoring + persistencia de predicciones** (`TelemetryUserDailyPrediction`)
+- [x] **Endpoints RO para consultar predicciones**
+  - [x] `/delancert/ml/predictions/users/<subscriber_code>/`
+  - [x] `/delancert/ml/predictions/daily/`
+
 ## Estado actual (evidencia del repositorio)
 
 ### Datos: modelos (raw/merged/gold) y performance

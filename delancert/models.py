@@ -181,6 +181,7 @@ class TelemetryJobRun(models.Model):
         INTEGRITY_CHECK = "integrity_check", "integrity_check"
         ML_BUILD_DATASET = "ml_build_dataset", "ml_build_dataset"
         ML_TRAIN = "ml_train", "ml_train"
+        ML_PREDICT = "ml_predict", "ml_predict"
 
     class JobStatus(models.TextChoices):
         SUCCESS = "success", "success"
@@ -257,5 +258,32 @@ class TelemetryUserDailyAgg(models.Model):
         unique_together = (("day", "subscriber_code"),)
         indexes = [
             models.Index(fields=["day", "subscriber_code"]),
+            models.Index(fields=["subscriber_code", "day"]),
+        ]
+
+
+class TelemetryUserDailyPrediction(models.Model):
+    """
+    Predicción diaria por usuario (batch scoring).
+
+    Nota: no guarda features para minimizar volumen; si se requiere explicación/auditoría,
+    se recomienda guardar el snapshot de features por separado o recalcularlo con ventanas.
+    """
+
+    day = models.DateField(db_index=True)
+    subscriber_code = models.CharField(max_length=50, db_index=True)
+    horizon_days = models.IntegerField(default=7, db_index=True)
+
+    # Predicción principal (watch-time futuro estimado)
+    y_pred_watch_seconds = models.FloatField()
+
+    model_dir = models.CharField(max_length=500, null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "telemetry_user_daily_prediction"
+        unique_together = (("day", "subscriber_code", "horizon_days"),)
+        indexes = [
+            models.Index(fields=["day", "horizon_days"]),
             models.Index(fields=["subscriber_code", "day"]),
         ]

@@ -13,6 +13,7 @@ from delancert.analytics.common import parse_date_range
 from delancert.analytics.common import DateRange
 from delancert.models import TelemetryJobRun
 from delancert.models import TelemetryChannelDailyAgg, TelemetryUserDailyAgg, MergedTelemetricOTTDelancer
+from delancert.models import TelemetryUserDailyPrediction
 from delancert.utils.rate_limit import acquire_rate_limit
 from delancert.exceptions import PanAccessAPIError
 
@@ -85,6 +86,36 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
             self.assertEqual(r.status_code, 202)
             self.assertTrue(r.json().get("accepted"))
             self.assertEqual(r.json().get("task_id"), "task-123")
+
+    @patch("delancert.tasks.ml_build_dataset_task")
+    def test_enqueue_ml_build_dataset_accepts(self, mock_task):
+        mock_task.delay.return_value.id = "task-ml-1"
+        with override_settings(CELERY_BROKER_URL="redis://localhost:6379/0"):
+            url = reverse("tasks-ml-build-dataset")
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            r = self.client.post(url, data={"lookback_days": 7, "horizon_days": 7}, format="json")
+            self.assertEqual(r.status_code, 202)
+            self.assertEqual(r.json().get("task_id"), "task-ml-1")
+
+    @patch("delancert.tasks.ml_train_task")
+    def test_enqueue_ml_train_accepts(self, mock_task):
+        mock_task.delay.return_value.id = "task-ml-2"
+        with override_settings(CELERY_BROKER_URL="redis://localhost:6379/0"):
+            url = reverse("tasks-ml-train")
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            r = self.client.post(url, data={"dataset": "artifacts/ml/datasets/watch_time_7d.csv"}, format="json")
+            self.assertEqual(r.status_code, 202)
+            self.assertEqual(r.json().get("task_id"), "task-ml-2")
+
+    @patch("delancert.tasks.ml_predict_task")
+    def test_enqueue_ml_predict_accepts(self, mock_task):
+        mock_task.delay.return_value.id = "task-ml-3"
+        with override_settings(CELERY_BROKER_URL="redis://localhost:6379/0"):
+            url = reverse("tasks-ml-predict")
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            r = self.client.post(url, data={"as_of": "2026-01-01"}, format="json")
+            self.assertEqual(r.status_code, 202)
+            self.assertEqual(r.json().get("task_id"), "task-ml-3")
 
     def test_ops_alerts_requires_api_key(self):
         url = reverse("telemetry-ops-alerts")
@@ -180,6 +211,44 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
         self.assertIsNotNone(job.started_at)
         self.assertIsNotNone(job.finished_at)
         self.assertEqual(job.status, TelemetryJobRun.JobStatus.SUCCESS)
+
+    @patch("delancert.tasks.telemetry_run_task")
+    def test_telemetry_run_async_returns_202_and_task_id(self, mock_task):
+        mock_task.delay.return_value.id = "task-telemetry-1"
+        with override_settings(CELERY_BROKER_URL="redis://localhost:6379/0"):
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            url = reverse("telemetry-run")
+            r = self.client.post(url, data={"async": True, "limit": 1}, format="json")
+            self.assertEqual(r.status_code, 202)
+            self.assertTrue(r.json().get("accepted"))
+            self.assertEqual(r.json().get("task_id"), "task-telemetry-1")
+            # El job run se crea dentro de la task, no en el endpoint async.
+            self.assertEqual(TelemetryJobRun.objects.count(), 0)
+
+    def test_telemetry_run_async_returns_503_when_celery_disabled(self):
+        with override_settings(CELERY_BROKER_URL=None):
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            url = reverse("telemetry-run")
+            r = self.client.post(url, data={"async": True, "limit": 1}, format="json")
+            self.assertEqual(r.status_code, 503)
+
+    @patch("delancert.tasks.telemetry_build_aggregates_task")
+    def test_build_aggregates_async_returns_202_and_task_id(self, mock_task):
+        mock_task.delay.return_value.id = "task-agg-1"
+        with override_settings(CELERY_BROKER_URL="redis://localhost:6379/0"):
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            url = reverse("telemetry-build-aggregates")
+            r = self.client.post(url, data={"async": True, "days": 7}, format="json")
+            self.assertEqual(r.status_code, 202)
+            self.assertTrue(r.json().get("accepted"))
+            self.assertEqual(r.json().get("task_id"), "task-agg-1")
+
+    def test_build_aggregates_async_returns_503_when_celery_disabled(self):
+        with override_settings(CELERY_BROKER_URL=None):
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            url = reverse("telemetry-build-aggregates")
+            r = self.client.post(url, data={"async": True, "days": 7}, format="json")
+            self.assertEqual(r.status_code, 503)
 
 
 class TelemetriaUtilsTests(APITestCase):
@@ -296,6 +365,31 @@ class TelemetriaUtilsTests(APITestCase):
         self.assertEqual(ch1.unique_users, 1)
         self.assertEqual(ch1.total_duration_seconds, 180)
 
+    def test_ml_predictions_read_endpoint(self):
+        from django.utils import timezone as dj_tz
+
+        d = dj_tz.localdate()
+        TelemetryUserDailyPrediction.objects.create(
+            day=d,
+            subscriber_code="u1",
+            horizon_days=7,
+            y_pred_watch_seconds=123.0,
+            model_dir="artifacts/ml/models/watch_time_7d/x",
+        )
+
+        url = reverse("ml-user-predictions", kwargs={"subscriber_code": "u1"})
+        # sin key => 401
+        r0 = self.client.get(url, data={"start": d.isoformat(), "end": d.isoformat()})
+        self.assertEqual(r0.status_code, 401)
+
+        # con RO key => 200
+        os.environ["TELEMETRIA_API_KEY_RO"] = "ro-key"
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="ro-key")
+        r = self.client.get(url, data={"start": d.isoformat(), "end": d.isoformat(), "horizon_days": 7})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json().get("success"))
+        self.assertEqual(len(r.json().get("predictions") or []), 1)
+
     def test_top_channels_uses_daily_aggs(self):
         from django.utils import timezone as dj_tz
         from delancert.analytics.channels import top_channels
@@ -335,6 +429,7 @@ class TelemetriaUtilsTests(APITestCase):
         from django.utils import timezone as dj_tz
         from django.core.management import call_command
         from pathlib import Path
+        from tempfile import TemporaryDirectory
         import csv
 
         d0 = dj_tz.localdate()
@@ -364,14 +459,19 @@ class TelemetriaUtilsTests(APITestCase):
             timestamp=dj_tz.now(),
         )
 
-        out = Path("artifacts/ml/datasets/test_watch_time.csv")
-        if out.exists():
-            out.unlink()
-
-        call_command("ml_build_dataset", **{"as_of": d0.isoformat(), "lookback_days": 7, "horizon_days": 7, "output": str(out)})
-        self.assertTrue(out.exists())
-
-        rows = list(csv.DictReader(out.open("r", encoding="utf-8")))
+        with TemporaryDirectory() as td:
+            out = Path(td) / "test_watch_time.csv"
+            call_command(
+                "ml_build_dataset",
+                **{
+                    "as_of": d0.isoformat(),
+                    "lookback_days": 7,
+                    "horizon_days": 7,
+                    "output": str(out),
+                },
+            )
+            self.assertTrue(out.exists())
+            rows = list(csv.DictReader(out.open("r", encoding="utf-8")))
         # u1 y u2 están en features
         by_u = {r["subscriber_code"]: r for r in rows}
         self.assertIn("u1", by_u)
@@ -383,66 +483,62 @@ class TelemetriaUtilsTests(APITestCase):
         from pathlib import Path
         import csv
         from django.core.management import call_command
+        from tempfile import TemporaryDirectory
 
-        ds = Path("artifacts/ml/datasets/test_train.csv")
-        ds.parent.mkdir(parents=True, exist_ok=True)
-        with ds.open("w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(
-                f,
-                fieldnames=[
-                    "as_of",
-                    "subscriber_code",
-                    "feature_start",
-                    "feature_end",
-                    "target_start",
-                    "target_end",
-                    "x_views",
-                    "x_unique_channels_sum",
-                    "x_watch_seconds",
-                    "x_active_days",
-                    "y_watch_seconds_next_horizon",
-                ],
-            )
-            w.writeheader()
-            w.writerow(
-                {
-                    "as_of": "2026-01-01",
-                    "subscriber_code": "u1",
-                    "feature_start": "2025-12-26",
-                    "feature_end": "2026-01-01",
-                    "target_start": "2026-01-02",
-                    "target_end": "2026-01-08",
-                    "x_views": 10,
-                    "x_unique_channels_sum": 3,
-                    "x_watch_seconds": 1000,
-                    "x_active_days": 3,
-                    "y_watch_seconds_next_horizon": 1200,
-                }
-            )
-            w.writerow(
-                {
-                    "as_of": "2026-01-01",
-                    "subscriber_code": "u2",
-                    "feature_start": "2025-12-26",
-                    "feature_end": "2026-01-01",
-                    "target_start": "2026-01-02",
-                    "target_end": "2026-01-08",
-                    "x_views": 2,
-                    "x_unique_channels_sum": 1,
-                    "x_watch_seconds": 200,
-                    "x_active_days": 1,
-                    "y_watch_seconds_next_horizon": 50,
-                }
-            )
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            ds = root / "test_train.csv"
+            with ds.open("w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "as_of",
+                        "subscriber_code",
+                        "feature_start",
+                        "feature_end",
+                        "target_start",
+                        "target_end",
+                        "x_views",
+                        "x_unique_channels_sum",
+                        "x_watch_seconds",
+                        "x_active_days",
+                        "y_watch_seconds_next_horizon",
+                    ],
+                )
+                w.writeheader()
+                w.writerow(
+                    {
+                        "as_of": "2026-01-01",
+                        "subscriber_code": "u1",
+                        "feature_start": "2025-12-26",
+                        "feature_end": "2026-01-01",
+                        "target_start": "2026-01-02",
+                        "target_end": "2026-01-08",
+                        "x_views": 10,
+                        "x_unique_channels_sum": 3,
+                        "x_watch_seconds": 1000,
+                        "x_active_days": 3,
+                        "y_watch_seconds_next_horizon": 1200,
+                    }
+                )
+                w.writerow(
+                    {
+                        "as_of": "2026-01-01",
+                        "subscriber_code": "u2",
+                        "feature_start": "2025-12-26",
+                        "feature_end": "2026-01-01",
+                        "target_start": "2026-01-02",
+                        "target_end": "2026-01-08",
+                        "x_views": 2,
+                        "x_unique_channels_sum": 1,
+                        "x_watch_seconds": 200,
+                        "x_active_days": 1,
+                        "y_watch_seconds_next_horizon": 50,
+                    }
+                )
 
-        out_dir = Path("artifacts/ml/models/test_model")
-        if out_dir.exists():
-            # limpiar outputs previos
-            for p in out_dir.glob("*"):
-                p.unlink()
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        call_command("ml_train", dataset=str(ds), out_dir=str(out_dir))
-        self.assertTrue((out_dir / "model.joblib").exists())
-        self.assertTrue((out_dir / "metrics.json").exists())
-        self.assertTrue((out_dir / "feature_names.json").exists())
+            out_dir = root / "test_model"
+            call_command("ml_train", dataset=str(ds), out_dir=str(out_dir))
+            self.assertTrue((out_dir / "model.joblib").exists())
+            self.assertTrue((out_dir / "metrics.json").exists())
+            self.assertTrue((out_dir / "feature_names.json").exists())

@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 from delancert.utils.rate_limit import acquire_rate_limit
 from django.utils import timezone
 from delancert.models import TelemetryJobRun
+from django.conf import settings
 
 def _serialize_for_json(obj):
     """
@@ -506,6 +507,50 @@ class TelemetryRunView(APIView):
     authentication_classes = [TelemetryApiKeyAuthentication]
 
     def post(self, request):
+        # Modo híbrido: si async=true y Celery está habilitado, encolamos el job y devolvemos task_id.
+        # Mantiene compatibilidad hacia atrás (sync por defecto).
+        async_requested = request.data.get("async", False)
+        if isinstance(async_requested, str):
+            async_requested = async_requested.strip().lower() in ("1", "true", "yes")
+
+        if async_requested:
+            rl = acquire_rate_limit("telemetry_run_enqueue", ttl_seconds=10)
+            if not rl.allowed:
+                return Response(
+                    {"success": False, "error": "Rate limited", "retry_after_seconds": rl.retry_after_seconds},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    headers={"Retry-After": str(rl.retry_after_seconds)},
+                )
+
+            if not bool(getattr(settings, "CELERY_BROKER_URL", None)):
+                return Response(
+                    {"success": False, "error": "Celery disabled", "message": "CELERY_BROKER_URL/REDIS_URL no configurado."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            from delancert.tasks import telemetry_run_task
+
+            limit = int(request.data.get("limit", 1000))
+            process_timestamps = request.data.get("process_timestamps", True)
+            batch_size = int(request.data.get("batch_size", 1000))
+            merge_batch_size = int(request.data.get("merge_batch_size", 500))
+            backfill_last_n = int(request.data.get("backfill_last_n", 0))
+
+            if isinstance(process_timestamps, str):
+                process_timestamps = process_timestamps.lower() in ("true", "1", "yes")
+
+            async_result = telemetry_run_task.delay(
+                limit=limit,
+                batch_size=batch_size,
+                process_timestamps=bool(process_timestamps),
+                merge_batch_size=merge_batch_size,
+                backfill_last_n=backfill_last_n,
+            )
+            return Response(
+                {"success": True, "accepted": True, "task_name": "telemetria.telemetry_run", "task_id": async_result.id},
+                status=status.HTTP_202_ACCEPTED,
+            )
+
         job = TelemetryJobRun.objects.create(
             job_type=TelemetryJobRun.JobType.RUN,
             status=TelemetryJobRun.JobStatus.SUCCESS,
