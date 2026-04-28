@@ -3,6 +3,11 @@ from delancert.server.action import TelemetrySyncView, MergeOTTView, TelemetryRu
 from delancert.server.health import TelemetryHealthView
 from delancert.server.jobs import TelemetryJobRunsView
 from delancert.server.ops import TelemetryOpsAlertsView, TelemetryOpsSummaryView
+from delancert.server.tasks_api import (
+    TelemetryRunEnqueueView,
+    TelemetryBuildAggregatesEnqueueView,
+    CeleryTaskStatusView,
+)
 from delancert.server.dashboard import (
     DashboardOverviewView,
     DashboardTopChannelsView,
@@ -18,6 +23,10 @@ urlpatterns = [
     path('telemetry/sync/', TelemetrySyncView.as_view(), name='telemetry-sync'),
     path('telemetry/merge/ott/', MergeOTTView.as_view(), name='telemetry-merge-ott'),
     path('telemetry/run/', TelemetryRunView.as_view(), name='telemetry-run'),
+    # Async jobs (Celery)
+    path("tasks/telemetry/run/", TelemetryRunEnqueueView.as_view(), name="tasks-telemetry-run"),
+    path("tasks/telemetry/build-aggregates/", TelemetryBuildAggregatesEnqueueView.as_view(), name="tasks-build-aggregates"),
+    path("tasks/status/<str:task_id>/", CeleryTaskStatusView.as_view(), name="tasks-status"),
     path("health/", TelemetryHealthView.as_view(), name="telemetry-health"),
     path("jobs/runs/", TelemetryJobRunsView.as_view(), name="telemetry-job-runs"),
     path("ops/alerts/", TelemetryOpsAlertsView.as_view(), name="telemetry-ops-alerts"),

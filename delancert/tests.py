@@ -6,6 +6,7 @@ from unittest.mock import patch
 from django.test import override_settings
 from django.urls import reverse
 from django.core.management import call_command
+from django.core.cache import cache
 from rest_framework.test import APITestCase
 
 from delancert.analytics.common import parse_date_range
@@ -24,6 +25,10 @@ from delancert.exceptions import PanAccessAPIError
 class TelemetriaAuthAndEndpointsTests(APITestCase):
     def setUp(self):
         super().setUp()
+        try:
+            cache.clear()
+        except Exception:
+            pass
         os.environ["TELEMETRIA_API_KEY_RW"] = "rw-key"
         os.environ["TELEMETRIA_API_KEY_RO"] = "ro-key"
         os.environ.pop("TELEMETRIA_API_KEY", None)
@@ -59,6 +64,27 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
         self.client.credentials(HTTP_X_TELEMETRIA_KEY="ro-key")
         r = self.client.post(url, data={"limit": 1}, format="json")
         self.assertEqual(r.status_code, 403)
+
+    @patch("delancert.tasks.telemetry_run_task")
+    def test_enqueue_telemetry_run_requires_celery_enabled(self, mock_task):
+        # Sin broker configurado, debe devolver 503 y NO encolar
+        with override_settings(CELERY_BROKER_URL=None):
+            url = reverse("tasks-telemetry-run")
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            r = self.client.post(url, data={"limit": 1}, format="json")
+            self.assertEqual(r.status_code, 503)
+            self.assertFalse(mock_task.delay.called)
+
+    @patch("delancert.tasks.telemetry_run_task")
+    def test_enqueue_telemetry_run_accepts_and_returns_task_id(self, mock_task):
+        mock_task.delay.return_value.id = "task-123"
+        with override_settings(CELERY_BROKER_URL="redis://localhost:6379/0"):
+            url = reverse("tasks-telemetry-run")
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            r = self.client.post(url, data={"limit": 1}, format="json")
+            self.assertEqual(r.status_code, 202)
+            self.assertTrue(r.json().get("accepted"))
+            self.assertEqual(r.json().get("task_id"), "task-123")
 
     def test_ops_alerts_requires_api_key(self):
         url = reverse("telemetry-ops-alerts")
