@@ -41,6 +41,7 @@ Marcado para llevar trazabilidad de lo que ya quedó implementado en el repo.
 - [x] **Endpoint híbrido** `POST /delancert/telemetry/run/` con `async=true` (encola Celery si está habilitado)
 - [x] **Endpoint híbrido** `POST /delancert/telemetry/build-aggregates/` con `async=true` (encola Celery si está habilitado)
 - [x] **Pipeline end-to-end (async)**: `/delancert/ops/pipeline/run/` (telemetry_run → build_aggregates → ml_predict)
+- [x] **Pipeline sync fallback** (sin Celery): `POST /delancert/ops/pipeline/run/` con `sync=true`
 
 ### Sprint 3 — ML v1 productizable (parcial)
 - [x] **ML baseline por comandos** (`ml_build_dataset`, `ml_train`)

@@ -88,7 +88,7 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
             self.assertTrue(r.json().get("accepted"))
             self.assertEqual(r.json().get("task_id"), "task-123")
 
-    @patch("delancert.tasks.pipeline_run_task")
+    @patch("delancert.server.pipeline.pipeline_run_task")
     def test_pipeline_run_accepts_and_returns_task_id(self, mock_task):
         mock_task.delay.return_value.id = "task-pipe-1"
         with override_settings(CELERY_BROKER_URL="redis://localhost:6379/0"):
@@ -97,6 +97,16 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
             r = self.client.post(url, data={"limit": 10}, format="json")
             self.assertEqual(r.status_code, 202)
             self.assertEqual(r.json().get("task_id"), "task-pipe-1")
+
+    @patch("delancert.server.pipeline.pipeline_run_task")
+    def test_pipeline_run_sync_fallback_when_celery_disabled(self, mock_pipeline):
+        mock_pipeline.return_value = {"pipeline": "ok", "steps": {}}
+        with override_settings(CELERY_BROKER_URL=None):
+            url = reverse("telemetry-ops-pipeline-run")
+            self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+            r = self.client.post(url, data={"sync": True, "limit": 1}, format="json")
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.json().get("mode"), "sync")
 
     @patch("delancert.tasks.ml_build_dataset_task")
     def test_enqueue_ml_build_dataset_accepts(self, mock_task):

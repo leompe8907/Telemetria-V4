@@ -8,13 +8,15 @@ from rest_framework.views import APIView
 from delancert.utils.api_key_authentication import TelemetryApiKeyAuthentication
 from delancert.utils.api_key_permission import HasTelemetryWriteApiKey
 from delancert.utils.rate_limit import acquire_rate_limit
+from delancert.tasks import pipeline_run_task
 
 
 class PipelineRunView(APIView):
     """
     Endpoint RW para ejecutar el pipeline completo.
 
-    Por defecto encola en Celery (async). Si Celery no está habilitado, devuelve 503.
+    - Default: encola en Celery (async) si está habilitado.
+    - Fallback: si Celery no está habilitado y `sync=true`, ejecuta el pipeline en proceso (sync).
     """
 
     permission_classes = [HasTelemetryWriteApiKey]
@@ -29,16 +31,14 @@ class PipelineRunView(APIView):
                 headers={"Retry-After": str(rl.retry_after_seconds)},
             )
 
-        if not bool(getattr(settings, "CELERY_BROKER_URL", None)):
-            return Response(
-                {"success": False, "error": "Celery disabled", "message": "CELERY_BROKER_URL/REDIS_URL no configurado."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        from delancert.tasks import pipeline_run_task
-
         p = request.data or {}
-        async_result = pipeline_run_task.delay(
+        sync_requested = p.get("sync", False)
+        if isinstance(sync_requested, str):
+            sync_requested = sync_requested.strip().lower() in ("1", "true", "yes")
+
+        celery_enabled = bool(getattr(settings, "CELERY_BROKER_URL", None))
+
+        kwargs = dict(
             limit=int(p.get("limit", 1000)),
             batch_size=int(p.get("batch_size", 1000)),
             process_timestamps=bool(p.get("process_timestamps", True)),
@@ -48,8 +48,25 @@ class PipelineRunView(APIView):
             predict_lookback_days=int(p.get("predict_lookback_days", 7)),
             predict_horizon_days=int(p.get("predict_horizon_days", 7)),
         )
-        return Response(
-            {"success": True, "accepted": True, "task_name": "telemetria.pipeline_run", "task_id": async_result.id},
-            status=status.HTTP_202_ACCEPTED,
-        )
+
+        if celery_enabled and not sync_requested:
+            async_result = pipeline_run_task.delay(**kwargs)
+            return Response(
+                {"success": True, "accepted": True, "task_name": "telemetria.pipeline_run", "task_id": async_result.id},
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        if not celery_enabled and not sync_requested:
+            return Response(
+                {
+                    "success": False,
+                    "error": "Celery disabled",
+                    "message": "Celery no configurado. Reintenta con sync=true o configura CELERY_BROKER_URL/REDIS_URL.",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Sync fallback (para entornos sin Redis/Celery)
+        result = pipeline_run_task(None, **kwargs)
+        return Response({"success": True, "mode": "sync", "result": result}, status=status.HTTP_200_OK)
 
