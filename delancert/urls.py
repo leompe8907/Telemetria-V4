@@ -18,6 +18,12 @@ from delancert.server.tasks_api import (
 from delancert.server.ml_predictions import UserPredictionsView, DailyPredictionsSummaryView
 from delancert.server.ml_models import LatestModelView, ModelListView
 from delancert.server.ml_model_admin import ActivateModelView, RollbackModelView
+from delancert.server.reports import (
+    AgentReportsListView,
+    AgentReportDetailView,
+    NocRunAndPersistView,
+    AnalystRunAndPersistView,
+)
 from delancert.server.dashboard import (
     DashboardOverviewView,
     DashboardTopChannelsView,
@@ -48,6 +54,11 @@ urlpatterns = [
     path("ops/noc/recommendations/", NocRecommendationsView.as_view(), name="telemetry-ops-noc-recommendations"),
     path("ops/analyst/report/", OpsAnalystReportView.as_view(), name="telemetry-ops-analyst-report"),
     path("ops/pipeline/run/", PipelineRunView.as_view(), name="telemetry-ops-pipeline-run"),
+    # Agent reports (persisted)
+    path("ops/reports/", AgentReportsListView.as_view(), name="telemetry-ops-reports"),
+    path("ops/reports/<int:report_id>/", AgentReportDetailView.as_view(), name="telemetry-ops-report-detail"),
+    path("ops/noc/run/", NocRunAndPersistView.as_view(), name="telemetry-ops-noc-run"),
+    path("ops/analyst/run/", AnalystRunAndPersistView.as_view(), name="telemetry-ops-analyst-run"),
     # ML predictions (read-only)
     path("ml/predictions/users/<str:subscriber_code>/", UserPredictionsView.as_view(), name="ml-user-predictions"),
     path("ml/predictions/daily/", DailyPredictionsSummaryView.as_view(), name="ml-daily-predictions"),

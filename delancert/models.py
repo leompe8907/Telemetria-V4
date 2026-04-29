@@ -310,3 +310,43 @@ class TelemetryModelArtifact(models.Model):
         indexes = [
             models.Index(fields=["task", "active", "created_at"]),
         ]
+
+
+class TelemetryAgentReport(models.Model):
+    """
+    Auditoría de reportes generados por Agentes (NOC/Analyst).
+    Guarda solo agregados (ops/alerts + ops/summary) y la salida (markdown/texto).
+    """
+
+    class ReportType(models.TextChoices):
+        NOC = "noc", "noc"
+        ANALYST = "analyst", "analyst"
+
+    class Severity(models.TextChoices):
+        INFO = "info", "info"
+        WARNING = "warning", "warning"
+        CRITICAL = "critical", "critical"
+
+    report_type = models.CharField(max_length=16, choices=ReportType.choices, db_index=True)
+    severity = models.CharField(max_length=16, choices=Severity.choices, db_index=True, default=Severity.INFO)
+
+    title = models.CharField(max_length=200, null=True, blank=True)
+    report_md = models.TextField()
+
+    ops_alerts = models.JSONField(default=dict, encoder=DjangoJSONEncoder)
+    ops_summary = models.JSONField(default=dict, encoder=DjangoJSONEncoder)
+
+    # LLM audit (opcional)
+    llm_enabled = models.BooleanField(default=False)
+    llm_model = models.CharField(max_length=200, null=True, blank=True)
+    llm_error = models.TextField(null=True, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "telemetry_agent_report"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["report_type", "created_at"]),
+            models.Index(fields=["severity", "created_at"]),
+        ]

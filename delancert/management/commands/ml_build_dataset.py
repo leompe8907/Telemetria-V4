@@ -40,6 +40,18 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--as-of", type=str, default=None, help="Fecha cutoff (YYYY-MM-DD).")
+        parser.add_argument(
+            "--as-of-start",
+            type=str,
+            default=None,
+            help="Inicio de rango de as_of (YYYY-MM-DD). Si se define junto a --as-of-end, genera un dataset multi-fecha.",
+        )
+        parser.add_argument(
+            "--as-of-end",
+            type=str,
+            default=None,
+            help="Fin de rango de as_of (YYYY-MM-DD). Si se define junto a --as-of-start, genera un dataset multi-fecha.",
+        )
         parser.add_argument("--lookback-days", type=int, default=7, help="Ventana de features hacia atrás.")
         parser.add_argument("--horizon-days", type=int, default=7, help="Horizonte del target hacia adelante.")
         parser.add_argument(
@@ -57,6 +69,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         as_of_str = options["as_of"]
+        as_of_start = options["as_of_start"]
+        as_of_end = options["as_of_end"]
         lookback_days = int(options["lookback_days"])
         horizon_days = int(options["horizon_days"])
         out_path = Path(str(options["output"]))
@@ -68,45 +82,18 @@ class Command(BaseCommand):
             started_at=timezone.now(),
         )
 
-        as_of = _parse_date(as_of_str) if as_of_str else timezone.localdate()
-
-        feature_win = _window(as_of, lookback_days)
-        target_win = _future_window(as_of, horizon_days)
-
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Features desde agregados diarios por usuario (rápido)
-        f_qs = TelemetryUserDailyAgg.objects.filter(day__gte=feature_win.start, day__lte=feature_win.end)
-
-        # Usuarios con historia mínima en ventana
-        # (sin Count para mantener dependencias mínimas; hacemos 1 query por user en el dict)
-        # Alternativa: annotate(days=Count('day')).
-        from django.db.models import Count
-
-        f_rows = (
-            f_qs.values("subscriber_code")
-            .annotate(
-                feat_views=Sum("views"),
-                feat_unique_channels=Sum("unique_channels"),
-                feat_watch_seconds=Sum("total_duration_seconds"),
-                feat_active_days=Count("day"),
-            )
-            .filter(feat_active_days__gte=min_history_days)
-        )
-
-        # Target exacto desde merged OTT (sum(dataDuration) en ventana futura)
-        # Nota: dataDuration está en segundos.
-        # Hacemos un group-by por subscriberCode.
-        t_rows = (
-            MergedTelemetricOTTDelancer.objects.filter(
-                dataDate__gte=target_win.start,
-                dataDate__lte=target_win.end,
-                subscriberCode__isnull=False,
-            )
-            .values("subscriberCode")
-            .annotate(y_watch_seconds=Sum("dataDuration"))
-        )
-        y_by_user = {r["subscriberCode"]: int(r["y_watch_seconds"] or 0) for r in t_rows}
+        # Resolver as_of (single) o rango (multi)
+        if as_of_start and as_of_end:
+            start = _parse_date(str(as_of_start))
+            end = _parse_date(str(as_of_end))
+            if end < start:
+                raise SystemExit("--as-of-end debe ser >= --as-of-start")
+            as_of_days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        else:
+            as_of = _parse_date(as_of_str) if as_of_str else timezone.localdate()
+            as_of_days = [as_of]
 
         # Escribir CSV (sin pandas para que sea estable en server)
         import csv
@@ -130,23 +117,54 @@ class Command(BaseCommand):
             )
             w.writeheader()
             n = 0
-            for r in f_rows.iterator():
-                u = r["subscriber_code"]
-                row = {
-                    "as_of": as_of.isoformat(),
-                    "subscriber_code": u,
-                    "feature_start": feature_win.start.isoformat(),
-                    "feature_end": feature_win.end.isoformat(),
-                    "target_start": target_win.start.isoformat(),
-                    "target_end": target_win.end.isoformat(),
-                    "x_views": int(r["feat_views"] or 0),
-                    "x_unique_channels_sum": int(r["feat_unique_channels"] or 0),
-                    "x_watch_seconds": int(r["feat_watch_seconds"] or 0),
-                    "x_active_days": int(r["feat_active_days"] or 0),
-                    "y_watch_seconds_next_horizon": int(y_by_user.get(u, 0)),
-                }
-                w.writerow(row)
-                n += 1
+            from django.db.models import Count
+
+            for as_of_day in as_of_days:
+                feature_win = _window(as_of_day, lookback_days)
+                target_win = _future_window(as_of_day, horizon_days)
+
+                # Features desde agregados diarios por usuario (rápido)
+                f_qs = TelemetryUserDailyAgg.objects.filter(day__gte=feature_win.start, day__lte=feature_win.end)
+                f_rows = (
+                    f_qs.values("subscriber_code")
+                    .annotate(
+                        feat_views=Sum("views"),
+                        feat_unique_channels=Sum("unique_channels"),
+                        feat_watch_seconds=Sum("total_duration_seconds"),
+                        feat_active_days=Count("day"),
+                    )
+                    .filter(feat_active_days__gte=min_history_days)
+                )
+
+                # Target exacto desde merged OTT (sum(dataDuration) en ventana futura)
+                t_rows = (
+                    MergedTelemetricOTTDelancer.objects.filter(
+                        dataDate__gte=target_win.start,
+                        dataDate__lte=target_win.end,
+                        subscriberCode__isnull=False,
+                    )
+                    .values("subscriberCode")
+                    .annotate(y_watch_seconds=Sum("dataDuration"))
+                )
+                y_by_user = {r["subscriberCode"]: int(r["y_watch_seconds"] or 0) for r in t_rows}
+
+                for r in f_rows.iterator():
+                    u = r["subscriber_code"]
+                    row = {
+                        "as_of": as_of_day.isoformat(),
+                        "subscriber_code": u,
+                        "feature_start": feature_win.start.isoformat(),
+                        "feature_end": feature_win.end.isoformat(),
+                        "target_start": target_win.start.isoformat(),
+                        "target_end": target_win.end.isoformat(),
+                        "x_views": int(r["feat_views"] or 0),
+                        "x_unique_channels_sum": int(r["feat_unique_channels"] or 0),
+                        "x_watch_seconds": int(r["feat_watch_seconds"] or 0),
+                        "x_active_days": int(r["feat_active_days"] or 0),
+                        "y_watch_seconds_next_horizon": int(y_by_user.get(u, 0)),
+                    }
+                    w.writerow(row)
+                    n += 1
 
         finished_at = timezone.now()
         job.finished_at = finished_at
@@ -157,7 +175,7 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"OK ml_build_dataset as_of={as_of} lookback_days={lookback_days} horizon_days={horizon_days} "
+                f"OK ml_build_dataset as_of={as_of_days[-1]} lookback_days={lookback_days} horizon_days={horizon_days} "
                 f"rows={n} output={out_path.as_posix()}"
             )
         )

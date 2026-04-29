@@ -53,7 +53,7 @@ Marcado para llevar trazabilidad de lo que ya quedó implementado en el repo.
   - [x] `/delancert/tasks/ml/train/`
 - [x] `/delancert/tasks/ml/predict/` (batch scoring)
 - [x] **Tests sin ensuciar artifacts** (datasets/modelos en directorios temporales durante tests)
-- [ ] **Split temporal real + drift** (pendiente)
+- [x] **Split temporal real + drift (train vs test)** (`ml_build_dataset` multi-fecha + `ml_train --split temporal`)
 - [x] **Batch scoring + persistencia de predicciones** (`TelemetryUserDailyPrediction`)
 - [x] **Endpoints RO para consultar predicciones**
   - [x] `/delancert/ml/predictions/users/<subscriber_code>/`
@@ -65,6 +65,15 @@ Marcado para llevar trazabilidad de lo que ya quedó implementado en el repo.
   - [x] `POST /delancert/ml/models/activate/`
   - [x] `POST /delancert/ml/models/rollback/`
 - [x] **Listado RO de modelos (registry)**: `GET /delancert/ml/models/`
+
+### Sprint 4 — Agentes v1 (auditoría y persistencia)
+- [x] **Persistencia de reportes de Agentes (BD)**: `TelemetryAgentReport`
+- [x] **Endpoints RW para generar + persistir**
+  - [x] `POST /delancert/ops/noc/run/`
+  - [x] `POST /delancert/ops/analyst/run/` (opcional `use_llm`)
+- [x] **Endpoints RO para consultar reportes persistidos**
+  - [x] `GET /delancert/ops/reports/`
+  - [x] `GET /delancert/ops/reports/<id>/`
 
 ## Estado actual (evidencia del repositorio)
 

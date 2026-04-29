@@ -15,6 +15,7 @@ from delancert.models import TelemetryJobRun
 from delancert.models import TelemetryChannelDailyAgg, TelemetryUserDailyAgg, MergedTelemetricOTTDelancer
 from delancert.models import TelemetryUserDailyPrediction
 from delancert.models import TelemetryModelArtifact
+from delancert.models import TelemetryAgentReport
 from delancert.utils.rate_limit import acquire_rate_limit
 from delancert.exceptions import PanAccessAPIError
 
@@ -293,6 +294,22 @@ class TelemetriaAuthAndEndpointsTests(APITestCase):
 
 
 class TelemetriaUtilsTests(APITestCase):
+    def setUp(self):
+        super().setUp()
+        try:
+            cache.clear()
+        except Exception:
+            pass
+        os.environ["TELEMETRIA_API_KEY_RW"] = "rw-key"
+        os.environ["TELEMETRIA_API_KEY_RO"] = "ro-key"
+        os.environ.pop("TELEMETRIA_API_KEY", None)
+
+    def tearDown(self):
+        os.environ.pop("TELEMETRIA_API_KEY_RW", None)
+        os.environ.pop("TELEMETRIA_API_KEY_RO", None)
+        os.environ.pop("TELEMETRIA_API_KEY", None)
+        super().tearDown()
+
     @override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}})
     def test_rate_limit_blocks_second_call(self):
         r1 = acquire_rate_limit("x", ttl_seconds=3)
@@ -382,6 +399,42 @@ class TelemetriaUtilsTests(APITestCase):
             self.assertIn("report", body)
             self.assertIn("llm", body)
             self.assertIn("highlights_md", body["report"])
+
+    def test_agent_reports_persist_and_query(self):
+        # Persist NOC report
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="rw-key")
+        url = reverse("telemetry-ops-noc-run")
+        r = self.client.post(url, data={}, format="json")
+        self.assertEqual(r.status_code, 201)
+        rid = r.json().get("id")
+        self.assertTrue(rid)
+
+        # Persist Analyst report (deterministic)
+        url2 = reverse("telemetry-ops-analyst-run")
+        r2 = self.client.post(url2, data={"use_llm": False}, format="json")
+        self.assertEqual(r2.status_code, 201)
+        rid2 = r2.json().get("id")
+        self.assertTrue(rid2)
+
+        self.assertEqual(TelemetryAgentReport.objects.count(), 2)
+
+        # List (RO)
+        self.client.credentials(HTTP_X_TELEMETRIA_KEY="ro-key")
+        url3 = reverse("telemetry-ops-reports")
+        r3 = self.client.get(url3)
+        self.assertEqual(r3.status_code, 200)
+        body = r3.json()
+        self.assertTrue(body.get("success"))
+        self.assertTrue(len(body.get("reports") or []) >= 2)
+
+        # Detail (RO)
+        url4 = reverse("telemetry-ops-report-detail", kwargs={"report_id": rid2})
+        r4 = self.client.get(url4)
+        self.assertEqual(r4.status_code, 200)
+        d = r4.json()
+        self.assertTrue(d.get("success"))
+        self.assertEqual(d.get("id"), rid2)
+        self.assertIn("report_md", d)
 
     def test_telemetry_ops_check_exit_codes(self):
         # OK -> exit 0
@@ -630,6 +683,53 @@ class TelemetriaUtilsTests(APITestCase):
         self.assertEqual(int(by_u["u1"]["y_watch_seconds_next_horizon"]), 300)
         self.assertEqual(int(by_u["u2"]["y_watch_seconds_next_horizon"]), 0)
 
+    def test_ml_build_dataset_supports_as_of_range(self):
+        from django.utils import timezone as dj_tz
+        from django.core.management import call_command
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        import csv
+        from datetime import timedelta
+
+        d0 = dj_tz.localdate()
+        d1 = d0 + timedelta(days=1)
+
+        # Features para ambos as_of (lookback 1d)
+        TelemetryUserDailyAgg.objects.create(day=d0, subscriber_code="u1", views=1, unique_channels=1, total_duration_seconds=10)
+        TelemetryUserDailyAgg.objects.create(day=d1, subscriber_code="u1", views=2, unique_channels=1, total_duration_seconds=20)
+
+        # Targets (horizon 1d): para as_of=d0 el target es d1
+        MergedTelemetricOTTDelancer.objects.create(
+            recordId=2001,
+            actionId=8,
+            subscriberCode="u1",
+            dataName="ch1",
+            dataDuration=15,
+            dataDate=d1,
+            timestamp=dj_tz.now(),
+        )
+
+        with TemporaryDirectory() as td:
+            out = Path(td) / "range.csv"
+            call_command(
+                "ml_build_dataset",
+                **{
+                    "as_of_start": d0.isoformat(),
+                    "as_of_end": d1.isoformat(),
+                    "lookback_days": 1,
+                    "horizon_days": 1,
+                    "min_history_days": 1,
+                    "output": str(out),
+                },
+            )
+            rows = list(csv.DictReader(out.open("r", encoding="utf-8")))
+
+        # Debe haber al menos 2 filas (u1 para d0 y d1)
+        self.assertTrue(len(rows) >= 2)
+        as_ofs = {r["as_of"] for r in rows}
+        self.assertIn(d0.isoformat(), as_ofs)
+        self.assertIn(d1.isoformat(), as_ofs)
+
     def test_ml_train_creates_model_artifacts(self):
         from pathlib import Path
         import csv
@@ -689,7 +789,7 @@ class TelemetriaUtilsTests(APITestCase):
                 )
 
             out_dir = root / "test_model"
-            call_command("ml_train", dataset=str(ds), out_dir=str(out_dir))
+            call_command("ml_train", dataset=str(ds), out_dir=str(out_dir), split="temporal", test_size=0.5)
             self.assertTrue((out_dir / "model.joblib").exists())
             self.assertTrue((out_dir / "metrics.json").exists())
             self.assertTrue((out_dir / "feature_names.json").exists())
