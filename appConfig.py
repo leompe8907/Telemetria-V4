@@ -34,6 +34,12 @@ class ServidorConfig:
     DEBUG = _bool('DEBUG', default=False)
     ALLOWED_HOSTS = _csv('ALLOWED_HOSTS')
     SALT = os.getenv('SALT')
+
+    # Compatibilidad hacia atrás (código antiguo usa validate())
+    @classmethod
+    def validate(cls):
+        return cls.configure()
+
     @classmethod
     def configure(cls):
         missing = []
@@ -85,6 +91,17 @@ class PanaccessConfigDelancer:
     USERNAME = _first_env('PANACCESS_USERNAME', 'username')
     PASSWORD = _first_env('PANACCESS_PASSWORD', 'password')
     API_TOKEN = _first_env('PANACCESS_API_TOKEN', 'api_token')
+
+    # Compatibilidad hacia atrás con nombres previos usados en `delancertv/Panaccess/*`
+    # (drmDelancer, usernameDelancer, passwordDelancer, api_tokenDelancer) y validate().
+    drmDelancer = DRM
+    usernameDelancer = USERNAME
+    passwordDelancer = PASSWORD
+    api_tokenDelancer = API_TOKEN
+
+    @classmethod
+    def validate(cls):
+        return cls.configure()
 
     @classmethod
     def configure(cls):
