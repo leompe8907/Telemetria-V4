@@ -1,11 +1,53 @@
 from __future__ import annotations
 
 import os
+import csv
+import json
+import math
+import random
+
+import numpy as np
+
 from dataclasses import dataclass
 
 from celery import shared_task
+
 from django.core.cache import cache
 
+from django.db import transaction
+from django.db.models import Count, Sum
+
+from django.utils import timezone
+
+from pathlib import Path
+
+from typing import List, Tuple
+
+from datetime import datetime, timezone as dt_timezone, date, timedelta
+
+from joblib import dump, load
+
+from sklearn.compose import TransformedTargetRegressor
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+from delancertv.Panaccess.merge7_8 import merge_ott_records
+
+from delancertv.models import (
+    MergedTelemetricOTTDelancer, 
+    TelemetryJobRun, 
+    TelemetryChannelDailyAgg, 
+    TelemetryUserDailyAgg, 
+    TelemetryUserDailyPrediction,
+    TelemetryModelArtifact, 
+)
+
+from delancertv.Panaccess.telemetry_fetcher import (
+    fetch_telemetry_records_smart,
+    save_telemetry_records,
+    get_highest_record_id,
+    is_database_empty,
+)
 
 @dataclass(frozen=True)
 class TaskLock:
@@ -46,15 +88,6 @@ def telemetry_run_task(
     backfill_last_n: int = 0,
     lock_ttl_seconds: int = 900,
 ):
-    from delancertv.Panaccess.telemetry_fetcher import (
-        fetch_telemetry_records_smart,
-        save_telemetry_records,
-        get_highest_record_id,
-        is_database_empty,
-    )
-    from delancertv.Panaccess.merge7_8 import merge_ott_records
-    from delancertv.models import TelemetryJobRun
-    from django.utils import timezone
 
     lock = _acquire_task_lock("telemetry_run", ttl_seconds=lock_ttl_seconds)
     if not lock.acquired:
@@ -123,8 +156,6 @@ def telemetry_run_task(
             "was_empty_before": bool(is_database_empty()),  # señal informativa
         }
     except Exception as e:
-        from django.utils import timezone
-
         finished_at = timezone.now()
         job.finished_at = finished_at
         job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
@@ -138,18 +169,7 @@ def telemetry_run_task(
 
 @shared_task(bind=True, name="telemetria.build_aggregates")
 def telemetry_build_aggregates_task(self, *, days: int = 7, lock_ttl_seconds: int = 1200):
-    from datetime import date, timedelta
 
-    from django.db import transaction
-    from django.db.models import Count, Sum
-    from django.utils import timezone
-
-    from delancertv.models import (
-        MergedTelemetricOTTDelancer,
-        TelemetryChannelDailyAgg,
-        TelemetryUserDailyAgg,
-        TelemetryJobRun,
-    )
 
     lock = _acquire_task_lock("telemetry_build_aggregates", ttl_seconds=lock_ttl_seconds)
     if not lock.acquired:
@@ -234,8 +254,6 @@ def telemetry_build_aggregates_task(self, *, days: int = 7, lock_ttl_seconds: in
             "users": TelemetryUserDailyAgg.objects.filter(day__gte=start_day).count(),
         }
     except Exception as e:
-        from django.utils import timezone
-
         finished_at = timezone.now()
         job.finished_at = finished_at
         job.duration_ms = int((finished_at - job.started_at).total_seconds() * 1000)
@@ -258,14 +276,6 @@ def ml_build_dataset_task(
     min_history_days: int = 1,
     lock_ttl_seconds: int = 1800,
 ):
-    from datetime import date, timedelta
-    from dataclasses import dataclass
-    from pathlib import Path
-
-    from django.db.models import Count, Sum
-    from django.utils import timezone
-
-    from delancertv.models import MergedTelemetricOTTDelancer, TelemetryJobRun, TelemetryUserDailyAgg
 
     lock = _acquire_task_lock("ml_build_dataset", ttl_seconds=lock_ttl_seconds)
     if not lock.acquired:
@@ -326,8 +336,6 @@ def ml_build_dataset_task(
             .annotate(y_watch_seconds=Sum("dataDuration"))
         )
         y_by_user = {r["subscriberCode"]: int(r["y_watch_seconds"] or 0) for r in t_rows}
-
-        import csv
 
         with out_path.open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(
@@ -395,15 +403,6 @@ def ml_train_task(
     out_dir: str | None = None,
     lock_ttl_seconds: int = 3600,
 ):
-    import json
-    import math
-    from dataclasses import dataclass
-    from datetime import datetime, timezone as dt_timezone
-    from pathlib import Path
-    from typing import List, Tuple
-
-    from django.utils import timezone
-    from delancertv.models import TelemetryJobRun
 
     lock = _acquire_task_lock("ml_train", ttl_seconds=lock_ttl_seconds)
     if not lock.acquired:
@@ -420,7 +419,6 @@ def ml_train_task(
         feature_names: list[str]
 
     def _read_dataset_csv(path: Path) -> Tuple[List[str], List[List[float]], List[float]]:
-        import csv
 
         with path.open("r", encoding="utf-8", newline="") as f:
             r = csv.DictReader(f)
@@ -435,7 +433,6 @@ def ml_train_task(
         return feature_names, X, y
 
     def _train_test_split(X: List[List[float]], y: List[float], test_size: float = 0.2, seed: int = 42):
-        import random
 
         n = len(X)
         idx = list(range(n))
@@ -454,11 +451,6 @@ def ml_train_task(
         return X_train, X_test, y_train, y_test
 
     def _fit_and_eval(feature_names: List[str], X: List[List[float]], y: List[float], out_dir: Path) -> TrainResult:
-        from joblib import dump
-        import numpy as np
-        from sklearn.compose import TransformedTargetRegressor
-        from sklearn.ensemble import HistGradientBoostingRegressor
-        from sklearn.metrics import mean_absolute_error, mean_squared_error
 
         X_train, X_test, y_train, y_test = _train_test_split(X, y, test_size=0.2, seed=42)
         base = HistGradientBoostingRegressor(learning_rate=0.1, max_depth=6, max_iter=200, random_state=42)
@@ -508,9 +500,6 @@ def ml_train_task(
         result = _fit_and_eval(feature_names, X, y, out_path)
 
         # Registrar modelo entrenado (registry mínimo) y dejar 1 activo por task
-        from django.db import transaction
-        from delancertv.models import TelemetryModelArtifact
-
         with transaction.atomic():
             TelemetryModelArtifact.objects.filter(task="watch_time_7d", active=True).update(active=False)
             TelemetryModelArtifact.objects.create(
@@ -568,18 +557,6 @@ def ml_predict_task(
     Fuente de features: `TelemetryUserDailyAgg` (sumas en ventana lookback).
     Persistencia: `TelemetryUserDailyPrediction` (upsert simple por delete+insert).
     """
-
-    import json
-    from datetime import date, timedelta
-    from pathlib import Path
-
-    from joblib import load
-    from django.db import transaction
-    from django.db.models import Count, Sum
-    from django.utils import timezone
-
-    from delancertv.models import TelemetryJobRun, TelemetryUserDailyAgg, TelemetryUserDailyPrediction, TelemetryModelArtifact
-
     lock = _acquire_task_lock("ml_predict", ttl_seconds=lock_ttl_seconds)
     if not lock.acquired:
         return {"skipped": True, "reason": "locked"}
@@ -717,9 +694,6 @@ def pipeline_run_task(
     2) build_aggregates (gold)
     3) ml_predict (batch scoring)
     """
-
-    from django.utils import timezone
-    from delancertv.models import TelemetryJobRun
 
     lock = _acquire_task_lock("pipeline_run", ttl_seconds=lock_ttl_seconds)
     if not lock.acquired:
